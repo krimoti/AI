@@ -1552,7 +1552,13 @@ document.getElementById('saveBtn').addEventListener('click',()=>{
     custom:customFields.filter(f=>f.label).map(f=>({label:f.label.trim(),value:f.value.trim()}))};
   const idx=db.findIndex(x=>x.k.toLowerCase()===k.toLowerCase());
   if(idx>-1)db[idx]=item;else db.push(item);
-  save(LS.DB,db);invalidateDupCache();buildTFIDF();toast('נשמר ✅','');renderDBTable();
+  save(LS.DB,db);invalidateDupCache();buildTFIDF();toast('נשמר ✅','');
+setTimeout(()=>{
+  updateFamilyList(document.getElementById('catSelect').value);
+  if(document.querySelector('.tab-btn[data-tab="db-manage"]').classList.contains('active')){
+    renderDBTable();
+  }
+},150);
   currentBase64='';customFields=[];
   document.getElementById('setupPreview').style.display='none';
   document.getElementById('itemImg').value='';
