@@ -1552,7 +1552,7 @@ document.getElementById('saveBtn').addEventListener('click',()=>{
     custom:customFields.filter(f=>f.label).map(f=>({label:f.label.trim(),value:f.value.trim()}))};
   const idx=db.findIndex(x=>x.k.toLowerCase()===k.toLowerCase());
   if(idx>-1)db[idx]=item;else db.push(item);
-  save(LS.DB,db);invalidateDupCache();buildTFIDF();toast('נשמר ✅','');
+  save(LS.DB,db);invalidateDupCache();buildTFIDF();toast('נשמר ✅','');renderDBTable();
   currentBase64='';customFields=[];
   document.getElementById('setupPreview').style.display='none';
   document.getElementById('itemImg').value='';
