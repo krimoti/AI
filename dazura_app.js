@@ -710,9 +710,9 @@ function renderBOM(){
     item.children.forEach(c=>{
       const freshC=db.find(x=>x.k.toLowerCase()===c.k.toLowerCase());
       const cs=stockMap[c.k.toLowerCase()],ci=cs!==undefined&&cs>0;
-      const cTypeLabel=c.type==='TOOL'?'כלי':'נלווה';
-      const cTypeBg=c.type==='TOOL'?'var(--tag-tool-bg)':'var(--tag-acc-bg)';
-      const cTypeFg=c.type==='TOOL'?'var(--tag-tool-c)':'var(--tag-acc-c)';
+      const cTypeLabel=c.type==='TOOL'?'כלי':c.type==='REQ'?'נדרש':'נלווה';
+      const cTypeBg=c.type==='TOOL'?'var(--tag-tool-bg)':c.type==='REQ'?'var(--tag-req-bg)':'var(--tag-acc-bg)';
+      const cTypeFg=c.type==='TOOL'?'var(--tag-tool-c)':c.type==='REQ'?'var(--tag-req-c)':'var(--tag-acc-c)';
       const cSt=cs===undefined?'<span style="color:var(--text2);font-size:.82em;">לא נבדק</span>':ci?`<span class="stock-badge stock-ok">✅ ${cs}</span>`:'<span class="stock-badge stock-missing">⚠️ חסר</span>';
       const cr=document.createElement('tr');
       cr.className='child-row';
@@ -849,7 +849,12 @@ function loadToEdit(k){
   currentBase64=i.img||'';const p=document.getElementById('setupPreview');p.src=currentBase64;p.style.display=currentBase64?'block':'none';
   customFields=(i.custom||[]).map(f=>({...f}));renderCF();updateFamilyList(i.c);document.getElementById('catSelect').value=i.c;
   switchTab('setup');
+  switchTab('setup');
+  window.scrollTo(0,0);
+  setTimeout(()=>document.getElementById('key').focus(),200);
+  toast('ערוך: '+k,'');
 }
+
 function deleteFromDB(k){if(!confirm('למחוק?'))return;db=db.filter(i=>i.k!==k);save(LS.DB,db);invalidateDupCache();buildTFIDF();renderDBTable();toast('נמחק','');}
 document.getElementById('resetDBBtn').addEventListener('click',()=>{if(!db.length){toast('DB ריק','');return;}const count=db.length;if(!confirm(`למחוק ${count} נירונים?`))return;if(prompt('הקלד "אפס":')!=='אפס'){toast('בוטל','');return;}db=[];bom=[];save(LS.DB,db);save(LS.BOM,bom);invalidateDupCache();buildTFIDF();updateFamilyList();renderDBTable();toast(`${count} נמחקו`,'');});
 
@@ -2296,97 +2301,156 @@ document.getElementById('precisionRange')?.addEventListener('input',()=>{clearTi
 /* ══ DEPENDENCY GRAPH ══ */
 function renderDepGraph(){
   const canvas=document.getElementById('depGraph');
-  if(!canvas||!bom.length){
-    const gc=document.getElementById('depGraphContainer');
-    if(gc)gc.style.display='none';
-    toast('הוסף פריטים ל-BOM תחילה','');
-    return;
-  }
+  if(!canvas){return;}
   const gc=document.getElementById('depGraphContainer');
   if(gc)gc.style.display='block';
+  if(!bom.length){toast('הוסף פריטים ל-BOM תחילה','');return;}
 
   const ctx=canvas.getContext('2d');
   const W=canvas.width=Math.max(canvas.parentElement?.offsetWidth||700,600);
-  const H=canvas.height=Math.max(300,bom.length*90);
 
-  ctx.clearRect(0,0,W,H);
-  // Background
-  ctx.fillStyle='#ffffff';
-  ctx.fillRect(0,0,W,H);
+  // ── Build SHARED node graph ──
+  // Collect all unique child keys across ALL BOM items
+  const nodeMap={};   // key → node data
+  const edges=[];     // {from, to, type, label}
 
-  const nodes={};const edges=[];
-  const COL_MAIN='#0066FF',COL_TOOL='#00A550',COL_ACC='#7C3AED',COL_ALT='#E91E63';
+  const COL={main:'#0066FF',REQ:'#E02020',ACC:'#7C3AED',TOOL:'#00A550',alt:'#E91E63'};
 
-  bom.forEach((item,i)=>{
-    nodes[item.k]={x:W*0.22,y:55+i*90,label:item.k,color:COL_MAIN,main:true};
-    item.children.forEach((c,j)=>{
-      const key=c.k+'__'+i+'__'+j;
-      const color=c.type==='TOOL'?COL_TOOL:COL_ACC;
-      nodes[key]={x:W*0.72,y:55+i*90+(j-(item.children.length-1)/2)*40,label:c.k,color,type:c.type};
-      edges.push({from:item.k,to:key,color,label:c.type==='TOOL'?'כלי':'נלווה'});
+  // Layout: BOM items on left, shared children on right
+  const mainItems=[];
+  const childUsage={};  // childKey → [{parentKey, type}]
+
+  bom.forEach(item=>{
+    mainItems.push(item.k);
+    item.children.forEach(c=>{
+      if(!childUsage[c.k])childUsage[c.k]=[];
+      childUsage[c.k].push({parent:item.k,type:c.type,v:c.v,img:c.img});
     });
     if(item.approvedAlt){
-      const ak='ALT__'+i;
-      nodes[ak]={x:W*0.22,y:nodes[item.k].y+36,label:'✅ '+item.approvedAlt,color:COL_ALT,alt:true};
-      edges.push({from:item.k,to:ak,color:COL_ALT,dashed:true,label:'חלופה'});
+      if(!childUsage['ALT:'+item.approvedAlt])childUsage['ALT:'+item.approvedAlt]=[];
+      childUsage['ALT:'+item.approvedAlt].push({parent:item.k,type:'ALT',v:item.approvedAlt});
     }
+  });
+
+  // Group children: shared (used by >1) vs unique
+  const sharedKeys=Object.keys(childUsage).filter(k=>childUsage[k].length>1);
+  const uniqueKeys=Object.keys(childUsage).filter(k=>childUsage[k].length===1);
+
+  // Compute height
+  const leftCount=mainItems.length;
+  const rightCount=Object.keys(childUsage).length;
+  const H=canvas.height=Math.max(350, Math.max(leftCount,rightCount)*75+80);
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--card').trim()||'#fff';
+  ctx.fillRect(0,0,W,H);
+
+  // Assign positions
+  const LX=W*0.18, RX=W*0.76;
+  mainItems.forEach((k,i)=>{
+    nodeMap[k]={x:LX,y:60+i*(H-100)/Math.max(leftCount-1,1),label:k,color:COL.main,type:'main'};
+  });
+
+  const allChildKeys=Object.keys(childUsage);
+  allChildKeys.forEach((ck,i)=>{
+    const usage=childUsage[ck];
+    const type=ck.startsWith('ALT:')?'ALT':usage[0].type;
+    const label=ck.startsWith('ALT:')?ck.slice(4):ck;
+    const isShared=usage.length>1;
+    nodeMap[ck]={
+      x:RX,
+      y:60+i*(H-100)/Math.max(allChildKeys.length-1,1),
+      label,
+      color:COL[type]||COL.ACC,
+      type,
+      shared:isShared,
+      usage:usage.length
+    };
+    // Edges from each parent
+    usage.forEach(u=>{
+      edges.push({from:u.parent,to:ck,type,dashed:type==='ALT'});
+    });
   });
 
   // Draw edges
   edges.forEach(e=>{
-    const f=nodes[e.from],t=nodes[e.to];
+    const f=nodeMap[e.from],t=nodeMap[e.to];
     if(!f||!t)return;
     ctx.beginPath();
-    ctx.moveTo(f.x+48,f.y);
-    ctx.bezierCurveTo(f.x+120,f.y,t.x-90,t.y,t.x-48,t.y);
-    ctx.strokeStyle=e.color||'#999';
-    ctx.lineWidth=e.dashed?1.5:2;
+    ctx.moveTo(f.x+50,f.y);
+    ctx.bezierCurveTo(f.x+130,f.y, t.x-110,t.y, t.x-52,t.y);
+    ctx.strokeStyle=COL[e.type]||'#999';
+    ctx.lineWidth=t.shared?2.5:1.8;
     if(e.dashed)ctx.setLineDash([6,4]);else ctx.setLineDash([]);
-    ctx.globalAlpha=0.65;
+    ctx.globalAlpha=t.shared?0.9:0.6;
     ctx.stroke();
     ctx.setLineDash([]);ctx.globalAlpha=1;
-    // Edge label
-    if(e.label){
-      const mx=f.x+48+(t.x-48-f.x-48)/2;
-      const my=(f.y+t.y)/2;
-      ctx.fillStyle=e.color||'#999';
-      ctx.font='9px Segoe UI';ctx.textAlign='center';
-      ctx.fillText(e.label,mx,my-4);
-    }
   });
 
   // Draw nodes
-  Object.values(nodes).forEach(n=>{
-    const rw=50,rh=22,rx=n.x-rw,ry=n.y-rh/2;
-    // Box
+  Object.values(nodeMap).forEach(n=>{
+    const rw=n.shared?56:50,rh=n.shared?26:22;
     ctx.beginPath();
-    if(ctx.roundRect)ctx.roundRect(rx,ry,rw*2,rh,5);
-    else ctx.rect(rx,ry,rw*2,rh);
-    ctx.fillStyle=n.color+'22';ctx.fill();
-    ctx.strokeStyle=n.color;ctx.lineWidth=n.main?2.5:1.5;ctx.stroke();
+    if(ctx.roundRect)ctx.roundRect(n.x-rw,n.y-rh/2,rw*2,rh,5);
+    else ctx.rect(n.x-rw,n.y-rh/2,rw*2,rh);
+    ctx.fillStyle=n.color+(n.shared?'33':'18');
+    ctx.fill();
+    ctx.strokeStyle=n.color;
+    ctx.lineWidth=n.type==='main'?2.5:n.shared?2:1.5;
+    // Shared nodes get double border
+    if(n.shared){
+      ctx.stroke();
+      ctx.beginPath();
+      if(ctx.roundRect)ctx.roundRect(n.x-rw+3,n.y-rh/2+3,rw*2-6,rh-6,3);
+      else ctx.rect(n.x-rw+3,n.y-rh/2+3,rw*2-6,rh-6);
+    }
+    ctx.stroke();
+
     // Label
-    ctx.fillStyle='#1a1a2e';ctx.font=(n.main?'bold ':'')+Math.min(11,12)+'px Segoe UI';
+    ctx.fillStyle=getComputedStyle(document.body).getPropertyValue('--text').trim()||'#111';
+    ctx.font=(n.type==='main'||n.shared?'bold ':'')+Math.min(n.shared?12:10,11)+'px Segoe UI';
     ctx.textAlign='center';ctx.textBaseline='middle';
     let lbl=n.label;
     while(ctx.measureText(lbl+'…').width>rw*2-10&&lbl.length>3)lbl=lbl.slice(0,-1);
     if(lbl!==n.label)lbl+='…';
     ctx.fillText(lbl,n.x,n.y);
+
+    // Shared badge
+    if(n.shared){
+      ctx.fillStyle=n.color;ctx.font='bold 9px Segoe UI';
+      ctx.fillText('×'+n.usage,n.x+rw-8,n.y-rh/2+7);
+    }
+
     // Stock dot
-    const qty=stockMap[n.label?.replace('✅ ','').toLowerCase()];
-    if(qty!==undefined){
-      ctx.beginPath();ctx.arc(n.x+rw-6,n.y-rh/2+5,4,0,Math.PI*2);
-      ctx.fillStyle=qty>0?'#00A550':'#E02020';ctx.fill();
+    const qtyVal=stockMap[n.label.toLowerCase()];
+    if(qtyVal!==undefined){
+      ctx.beginPath();ctx.arc(n.x+rw-5,n.y-rh/2+5,4,0,Math.PI*2);
+      ctx.fillStyle=qtyVal>0?'#00A550':'#E02020';ctx.fill();
     }
   });
 
+  // Column headers
+  ctx.font='bold 11px Segoe UI';ctx.textAlign='center';ctx.globalAlpha=0.5;
+  ctx.fillStyle=COL.main;ctx.fillText('פריטים ראשיים',LX,28);
+  ctx.fillStyle='#444';ctx.fillText('תלויות',RX,28);
+  ctx.globalAlpha=1;
+
   // Legend
-  ctx.font='10px Segoe UI';ctx.textAlign='left';ctx.globalAlpha=.85;
-  [[COL_MAIN,'ראשי'],[COL_TOOL,'כלי'],[COL_ACC,'נלווה'],[COL_ALT,'חלופה']].forEach(([c,l],i)=>{
-    ctx.fillStyle=c;ctx.fillRect(10,H-55+i*13,10,9);
-    ctx.fillStyle='#444';ctx.fillText(l,25,H-50+i*13);
+  const legendItems=[[COL.main,'ראשי'],[COL.REQ,'נדרש'],[COL.ACC,'נלווה'],[COL.TOOL,'כלי'],[COL.alt,'חלופה']];
+  ctx.font='10px Segoe UI';ctx.textAlign='left';ctx.globalAlpha=0.8;
+  legendItems.forEach(([c,l],i)=>{
+    ctx.fillStyle=c;ctx.fillRect(10,H-60+i*11,8,8);
+    ctx.fillStyle='#444';ctx.fillText(l,22,H-55+i*11);
   });
   ctx.globalAlpha=1;
+
+  // Shared note
+  if(sharedKeys.length>0){
+    ctx.font='10px Segoe UI';ctx.textAlign='right';ctx.fillStyle='#666';
+    ctx.fillText('מסגרת כפולה = תלות משותפת',W-10,H-10);
+  }
 }
+
 
 // Hook depGraphBtn
 document.getElementById('depGraphBtn')?.addEventListener('click',()=>{
