@@ -2,14 +2,42 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<script>
+/* ⚡ MUST BE FIRST — catches Script error. from XLSX CDN on Safari/file:// */
+window.onerror=function(m,s,l){
+  if(!m||m.indexOf('Script error')>=0||(!s&&!l))return true;
+  return false;
+};
+window.addEventListener('error',function(e){
+  var m=String(e.message||'');
+  if(m.indexOf('Script error')>=0||(!e.filename&&!e.lineno)){
+    e.preventDefault();e.stopImmediatePropagation();
+  }
+},true);
+</script>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5,viewport-fit=cover">
 <title>Dazura Neural Systems v45</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+/* Load XLSX asynchronously to prevent Script error. on Safari/file:// */
+(function(){
+  var s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  s.async=false;
+  s.onerror=function(){
+    window._xlsxFailed=true;
+    console.warn('[Dazura] XLSX not available - Excel export disabled');
+  };
+  document.head.appendChild(s);
+})();
+</script>
 <style>
 /* ═══════════════════════════════════
    THEME TOKENS — overridden per theme
 ═══════════════════════════════════ */
 :root{
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+
   /* Blue Professional (default) */
   --primary:#1a73e8;--primary-text:#fff;
   --success:#1e8e3e;--warning:#f29900;--danger:#d93025;--alt:#7b1fa2;
@@ -133,7 +161,8 @@ body.t-white{
 /* ═══════════════════════════════════
    BASE STYLES
 ═══════════════════════════════════ */
-*{box-sizing:border-box;transition:background-color .15s,color .15s,border-color .15s;}
+*{box-sizing:border-box;transition:background-color .15s,color .15s,border-color .15s;;-webkit-tap-highlight-color:transparent;}
+body{-webkit-text-size-adjust:100%;}
 html{font-size:var(--font-base,13px);}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);margin:0;direction:rtl;color:var(--text);}
 
@@ -1005,8 +1034,16 @@ document.getElementById('delFamilyBtn').addEventListener('click',()=>{const n=do
 /* ══ FAMILY FILTER CHIPS ══ */
 function renderFamFilterChips(){
   const el=document.getElementById('famFilterChips');if(!el)return;
-  el.innerHTML=`<span class="fam-chip${!famSearchFilter?' active':''}" data-fam="">הכל</span>`+families.map(f=>`<span class="fam-chip${famSearchFilter===f?' active':''}" data-fam="${esc(f)}">${esc(f)}</span>`).join('');
-  el.querySelectorAll('.fam-chip').forEach(c=>c.addEventListener('click',()=>{famSearchFilter=c.dataset.fam||null;renderFamFilterChips();clearTimeout(searchDebounce);searchDebounce=setTimeout(solve,50);}));
+  if(families.length>10){
+    el.innerHTML=`<select id="famDropdown" style="width:100%;padding:6px 9px;border-radius:7px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:.88em;margin-bottom:8px;">
+      <option value="">🔽 כל המשפחות</option>
+      ${families.map(f=>`<option value="${esc(f)}" ${famSearchFilter===f?'selected':''}>${esc(f)}</option>`).join('')}
+    </select>`;
+    el.querySelector('#famDropdown').addEventListener('change',e=>{famSearchFilter=e.target.value||null;clearTimeout(searchDebounce);searchDebounce=setTimeout(solve,50);});
+  } else {
+    el.innerHTML=`<span class="fam-chip${!famSearchFilter?' active':''}" data-fam="">הכל</span>`+families.map(f=>`<span class="fam-chip${famSearchFilter===f?' active':''}" data-fam="${esc(f)}">${esc(f)}</span>`).join('');
+    el.querySelectorAll('.fam-chip').forEach(c=>c.addEventListener('click',()=>{famSearchFilter=c.dataset.fam||null;renderFamFilterChips();clearTimeout(searchDebounce);searchDebounce=setTimeout(solve,50);}));
+  }
 }
 
 /* ══ CUSTOM FIELDS ══ */
@@ -1080,6 +1117,7 @@ function solve(){
   if(!q){chat.innerHTML='';return;}
   ensureTFIDF();
   const ql=q.toLowerCase();
+  const _semExpanded=typeof dazuraExpand==='function'?dazuraExpand(q):[];
   const qTokens=tokenize(q);
 
   // ── TF-IDF cosine scores ──
@@ -1143,6 +1181,8 @@ document.getElementById('precisionRange').addEventListener('input',()=>{clearTim
 function addToBOM(k){
   const item=db.find(x=>x.k.toLowerCase()===k.toLowerCase())||{k,v:'חסר',img:'',req:[],tool:'',acc:[],custom:[]};
   if(bom.some(x=>x.k===item.k)){toast('כבר ב-BOM','');return;}
+  // If this item is already an approved alt for another BOM item — skip as standalone
+  if(bom.some(x=>x.approvedAlt&&x.approvedAlt.toLowerCase()===k.toLowerCase())){toast('פריט זה הוגדר כחלופה מאושרת','');return;}
   const children=[];
   item.req.forEach(rk=>{const c=db.find(x=>x.k.toLowerCase()===rk.toLowerCase());children.push({k:rk,v:c?c.v:'חסר',img:c?c.img:'',type:'REQ'});});
   if(item.tool){
@@ -1170,47 +1210,139 @@ function bomHealth(){
 
 function renderBOM(){
   const body=document.getElementById('bom-body');body.innerHTML='';
+
   bom.forEach((item,idx)=>{
-    const qty=stockMap[item.k.toLowerCase()],has=qty!==undefined,inS=has&&qty>0,alt=findBestAlt(item.k);
-    const stHtml=!has?'<span style="color:var(--text2);font-size:.82em;">לא נבדק</span>':inS?`<span class="stock-badge stock-ok">✅ ${qty}</span>`:`<span class="stock-badge stock-missing">⚠️ 0</span>`;
+    const qty=stockMap[item.k.toLowerCase()],has=qty!==undefined,inS=has&&qty>0;
+    const alt=findBestAlt(item.k);
+
+    // ── Status badge ──
+    const stHtml=!has
+      ?'<span style="color:var(--text2);font-size:.82em;">לא נבדק</span>'
+      :inS?`<span class="stock-badge stock-ok">✅ ${qty}</span>`
+          :`<span class="stock-badge stock-missing">⚠️ 0</span>`;
+
+    // ── Alt cell ──
     let altCell='—';
-    if(alt&&alt.score>10){const aq=stockMap[alt.item.k.toLowerCase()];const ab=aq!==undefined?`<span class="stock-badge ${aq>0?'stock-ok':'stock-missing'}">${aq}</span>`:'';altCell=`<div style="min-width:130px;"><div style="font-weight:bold;color:var(--alt);font-size:.85em;">🔄 ${esc(alt.item.k)} ${ab}</div><div class="alt-row" style="margin:2px 0;"><div class="alt-bar"><div class="alt-fill" style="width:${alt.score}%"></div></div><span class="alt-pct">${alt.score}%</span></div><div class="alt-reasons">${alt.reasons.slice(0,2).join(' · ')}</div><button class="btn btn-ghost" style="margin-top:2px;padding:2px 7px;font-size:.8em;" data-alt="${esc(alt.item.k)}">הוסף</button></div>`;}
+    if(item.approvedAlt){
+      altCell=`<div style="display:flex;align-items:center;gap:5px;">
+        <span style="font-size:.72em;font-weight:bold;padding:2px 6px;border-radius:4px;background:var(--stock-ok-bg);color:var(--success);white-space:nowrap;">✅ חלופה מאושרת</span>
+        <b style="color:var(--success);font-size:.85em;">${esc(item.approvedAlt)}</b>
+        <button class="btn btn-ghost" data-rmalt="${idx}" style="padding:1px 5px;font-size:.75em;color:var(--danger);">✖</button>
+      </div>`;
+    } else if(alt&&alt.score>10){
+      const aq=stockMap[alt.item.k.toLowerCase()];
+      const ab=aq!==undefined?`<span class="stock-badge ${aq>0?'stock-ok':'stock-missing'}" style="font-size:.75em;">${aq}</span>`:'';
+      altCell=`<div style="min-width:130px;">
+        <div style="font-size:.78em;color:var(--alt);font-weight:bold;">💡 ${esc(alt.item.k)} ${ab} <span style="opacity:.7;">(${alt.score}%)</span></div>
+        <div class="alt-row" style="margin:2px 0;"><div class="alt-bar"><div class="alt-fill" style="width:${alt.score}%"></div></div><span class="alt-pct">${alt.score}%</span></div>
+        <button class="btn btn-ghost" data-approve="${idx}" data-altk="${esc(alt.item.k)}" style="margin-top:2px;padding:2px 7px;font-size:.75em;color:var(--success);border-color:var(--success);">✅ אשר</button>
+      </div>`;
+    }
+
+    // ── Type badge (ראשי — static) ──
+    const typeBadge='<span style="font-size:.8em;font-weight:bold;padding:3px 9px;border-radius:4px;background:var(--primary);color:#fff;white-space:nowrap;">ראשי</span>';
+
+    // ── Stock alert for qty ──
+    const bomQty=item.qty||1;
+    let stockAlert='';
+    if(has&&qty<bomQty)stockAlert=`<div style="font-size:.7em;color:var(--danger);font-weight:bold;margin-top:1px;">⚠️ חסר ${bomQty-qty}</div>`;
+
+    // ── Note ──
+    const noteHtml=`<div class="bom-note" data-ni="${idx}">${item.note?esc(item.note):'<span style="color:var(--border);font-size:.8em;">+ הוסף הערה</span>'}</div><input class="note-input" data-ni="${idx}" placeholder="הערה..." value="${esc(item.note||'')}">`;
+
+    // ── Main row ──
     const tr=document.createElement('tr');
     if(has&&!inS)tr.className=alt&&alt.score>10?'bom-has-alt':'bom-missing';
-    const noteHtml=`<div class="bom-note" data-ni="${idx}">${item.note?esc(item.note):'<span style="color:var(--border);font-size:.8em;">+ הוסף הערה</span>'}</div><input class="note-input" data-ni="${idx}" placeholder="הערה..." value="${esc(item.note||'')}">`;
-    tr.innerHTML=`<td><img src="${item.img}" class="img-preview" style="width:34px;height:34px;" alt=""></td><td><b>${esc(item.k)}</b></td><td style="font-size:.88em;">${esc(item.v)}</td><td style="min-width:100px;">${noteHtml}</td><td>${has?qty:'—'}</td><td>${stHtml}</td><td>${altCell}</td><td><button class="btn btn-ghost" data-idx="${idx}" style="padding:3px 8px;">✖</button></td>`;
+    tr.innerHTML=`
+      <td><img src="${item.img||''}" class="img-preview" style="width:34px;height:34px;" alt=""></td>
+      <td><b>${esc(item.k)}</b></td>
+      <td style="font-size:.88em;">${esc(item.v)}</td>
+      <td style="min-width:90px;">${noteHtml}</td>
+      <td style="text-align:center;">
+        <input type="number" class="qty-input" data-qi="${idx}" value="${bomQty}" min="1" max="9999"
+          style="width:52px;padding:3px 4px;text-align:center;border-radius:5px;border:1px solid var(--border);background:var(--hover);color:var(--text);font-weight:bold;font-size:.9em;">
+        ${stockAlert}
+      </td>
+      <td>${has?qty:'—'}</td>
+      <td>${stHtml}</td>
+      <td>${typeBadge}</td>
+      <td>${altCell}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn btn-ghost" data-idx="${idx}" style="padding:3px 7px;">✖</button>
+        <button class="btn btn-ghost" data-up="${idx}" style="padding:3px 6px;font-size:.75em;display:none;">↑</button>
+        <button class="btn btn-ghost" data-dn="${idx}" style="padding:3px 6px;font-size:.75em;display:none;">↓</button>
+      </td>`;
     body.appendChild(tr);
+
+    // Listeners
     const nd=tr.querySelector('.bom-note'),ni=tr.querySelector('.note-input');
     nd.addEventListener('click',()=>{nd.style.display='none';ni.style.display='block';ni.focus();});
     ni.addEventListener('blur',()=>{bom[idx].note=ni.value;save(LS.BOM,bom);nd.innerHTML=ni.value?esc(ni.value):'<span style="color:var(--border);font-size:.8em;">+ הוסף הערה</span>';ni.style.display='none';nd.style.display='block';});
-    tr.querySelectorAll('[data-alt]').forEach(b=>b.addEventListener('click',()=>addToBOM(b.dataset.alt)));
+
     tr.querySelector('[data-idx]').addEventListener('click',()=>{bom.splice(idx,1);save(LS.BOM,bom);renderBOM();resetApproval();});
+
+    const qi=tr.querySelector('.qty-input');
+    qi.addEventListener('change',e=>{const v=Math.max(1,parseInt(e.target.value)||1);bom[+e.target.dataset.qi].qty=v;e.target.value=v;save(LS.BOM,bom);renderBOM();});
+
+    const upBtn=tr.querySelector('[data-up]'),dnBtn=tr.querySelector('[data-dn]');
+    if(upBtn)upBtn.addEventListener('click',()=>{if(idx>0){const t=bom[idx];bom[idx]=bom[idx-1];bom[idx-1]=t;save(LS.BOM,bom);renderBOM();}});
+    if(dnBtn)dnBtn.addEventListener('click',()=>{if(idx<bom.length-1){const t=bom[idx];bom[idx]=bom[idx+1];bom[idx+1]=t;save(LS.BOM,bom);renderBOM();}});
+
+    if(tr.querySelector('[data-approve]')){
+      tr.querySelector('[data-approve]').addEventListener('click',e=>{
+        bom[+e.currentTarget.dataset.approve].approvedAlt=e.currentTarget.dataset.altk;
+        save(LS.BOM,bom);renderBOM();toast('חלופה אושרה ✅','');
+      });
+    }
+    if(tr.querySelector('[data-rmalt]')){
+      tr.querySelector('[data-rmalt]').addEventListener('click',e=>{
+        bom[+e.currentTarget.dataset.rmalt].approvedAlt=null;
+        save(LS.BOM,bom);renderBOM();
+      });
+    }
+
+    // ── Approved alt row ──
+    if(item.approvedAlt){
+      const ai=db.find(x=>x.k.toLowerCase()===item.approvedAlt.toLowerCase())||{k:item.approvedAlt,v:'',img:''};
+      const ar=document.createElement('tr');
+      ar.style.cssText='background:var(--stock-ok-bg);border-right:4px solid var(--success);';
+      ar.innerHTML=`
+        <td><img src="${ai.img||''}" class="img-preview" style="width:28px;height:28px;border:2px solid var(--success);" alt=""></td>
+        <td colspan="2"><span style="font-size:.7em;color:var(--success);font-weight:bold;display:block;">✅ חלופה מאושרת</span><b style="color:var(--success);font-size:.88em;">${esc(ai.k)}</b> <span style="font-size:.8em;color:var(--text2);">${esc(ai.v)}</span></td>
+        <td></td><td></td><td></td>
+        <td><span style="font-size:.75em;padding:2px 6px;border-radius:4px;background:var(--stock-ok-bg);color:var(--success);border:1px solid var(--success);">חלופה</span></td>
+        <td></td><td></td><td></td>`;
+      body.appendChild(ar);
+    }
+
+    // ── Children rows ──
     item.children.forEach(c=>{
+      const freshC=db.find(x=>x.k.toLowerCase()===c.k.toLowerCase());
       const cs=stockMap[c.k.toLowerCase()],ci=cs!==undefined&&cs>0;
-      let statusHtml,noteCell='';
-      if(c.type==='TOOL'){
-        if(cs===undefined){
-          statusHtml='<span class="stock-badge stock-unknown">לא נבדק</span>';
-          noteCell=`<span style="color:var(--danger);font-size:.82em;font-weight:bold;">⚠️ חסר — להזמין 1 יח'</span>`;
-        } else if(ci){
-          statusHtml=`<span class="stock-badge stock-ok">✅ ${cs}</span>`;
-          noteCell='';
-        } else {
-          statusHtml='<span class="stock-badge stock-missing">⚠️ 0</span>';
-          noteCell=`<span style="color:var(--danger);font-size:.82em;font-weight:bold;">⚠️ חסר — להזמין 1 יח'</span>`;
-        }
-      } else {
-        statusHtml=ci?`<span class="stock-badge stock-ok">✅ ${cs}</span>`:'<span class="stock-badge stock-missing">⚠️ חסר</span>';
-      }
+      const cTypeLabel=c.type==='TOOL'?'כלי':'נלווה';
+      const cTypeBg=c.type==='TOOL'?'var(--tag-tool-bg)':'var(--tag-acc-bg)';
+      const cTypeFg=c.type==='TOOL'?'var(--tag-tool-c)':'var(--tag-acc-c)';
+      const cSt=cs===undefined?'<span style="color:var(--text2);font-size:.82em;">לא נבדק</span>':ci?`<span class="stock-badge stock-ok">✅ ${cs}</span>`:'<span class="stock-badge stock-missing">⚠️ חסר</span>';
       const cr=document.createElement('tr');
-      cr.className=c.type==='TOOL'&&!ci?'bom-missing':'child-row';
-      cr.innerHTML=`<td><img src="${c.img||''}" class="img-preview" style="width:26px;height:26px;" alt=""></td><td class="child-indent">↳ ${esc(c.k)} <span style="font-size:.78em;opacity:.7;">[${c.type}]</span></td><td style="font-size:.85em;">${esc(c.v)}</td><td>${noteCell}</td><td>${cs!==undefined?cs:'—'}</td><td>${statusHtml}</td><td></td><td></td>`;
+      cr.className='child-row';
+      cr.innerHTML=`
+        <td><img src="${freshC?freshC.img:c.img||''}" class="img-preview" style="width:26px;height:26px;" alt=""></td>
+        <td style="padding-right:22px;color:var(--primary);font-weight:600;font-size:.88em;">${esc(c.k)}</td>
+        <td style="font-size:.85em;">${esc(freshC?freshC.v:c.v)}</td>
+        <td></td><td></td>
+        <td>${cs!==undefined?cs:'—'}</td>
+        <td>${cSt}</td>
+        <td><span style="font-size:.75em;font-weight:bold;padding:2px 6px;border-radius:4px;background:${cTypeBg};color:${cTypeFg};">${cTypeLabel}</span></td>
+        <td></td><td></td>`;
       body.appendChild(cr);
     });
   });
+
+  // ── Health bar ──
   const h=bomHealth();const hw=document.getElementById('bomHealthWrap');
   if(h&&hw){const col=h.pct>70?'var(--success)':h.pct>40?'var(--warning)':'var(--danger)';hw.style.display='block';hw.innerHTML=`<div style="display:flex;align-items:center;gap:7px;background:var(--hover);border-radius:7px;padding:5px 10px;font-size:.88em;border:1px solid var(--border);"><span style="color:var(--text);">בריאות:</span><div style="width:80px;height:7px;background:var(--border);border-radius:4px;overflow:hidden;"><div style="width:${h.pct}%;height:100%;background:${col};border-radius:4px;"></div></div><b style="color:${col}">${h.pct}%</b><span style="color:var(--text2);font-size:.85em;">${h.ok}/${h.total}</span></div>`;}
 }
+
 
 document.getElementById('clearBOMBtn').addEventListener('click',()=>{if(!bom.length){toast('BOM ריק','');return;}if(!confirm(`למחוק ${bom.length} פריטים?`))return;bom=[];save(LS.BOM,bom);renderBOM();resetApproval();toast('BOM נוקה','');});
 document.getElementById('approveBOMBtn').addEventListener('click',()=>{isApproved=true;['exportBomCsvBtn','exportBomXlsxBtn','exportStockReportBtn','exportMissingBtn','exportHTMLReportBtn'].forEach(id=>{const b=document.getElementById(id);b.className='btn btn-success';b.disabled=false;});document.getElementById('approvalBar').classList.add('is-approved');document.getElementById('approvalText').textContent='✅ מאושר';});
@@ -1235,20 +1367,41 @@ document.getElementById('exportBomCsvBtn').addEventListener('click',()=>{
 
 /* ══ EXPORT XLSX ══ */
 document.getElementById('exportBomXlsxBtn').addEventListener('click',()=>{
+  if(window._xlsxFailed||typeof XLSX==='undefined'){toast('Excel לא זמין — פתח מדפדפן עם חיבור אינטרנט','');return;}
   if(!isApproved)return;
   const wb=XLSX.utils.book_new();
-  const headerFill='FF1A73E8',headerFont='FFFFFFFF';
-  const hdrs=['Part Number','Description','Note','Stock','Type','חלופה מומלצת','ציון חלופה'];
-  const rows=[hdrs.map(h=>xlCell(h,headerFill,headerFont,true))];
+  function xc(v,bg,fg,bold){return{v:String(v||''),t:'s',s:{
+    fill:{patternType:'solid',fgColor:{rgb:bg||'FFFFFFFF'}},
+    font:{bold:!!bold,color:{rgb:fg||'FF1A1A1A'},name:'Calibri',sz:10},
+    alignment:{horizontal:'right',vertical:'center'},
+    border:{top:{style:'thin',color:{rgb:'FFD0D7DE'}},bottom:{style:'thin',color:{rgb:'FFD0D7DE'}},left:{style:'thin',color:{rgb:'FFD0D7DE'}},right:{style:'thin',color:{rgb:'FFD0D7DE'}}}
+  }};}
+  function hdr(v){return xc(v,'FF1A2A5E','FFFFFFFF',true);}
+  const REQ={bg:'FFFCE8E6',fg:'FFC5221F'},ACC={bg:'FFE8F0FE',fg:'FF1558D6'},TOOL={bg:'FFE6F4EA',fg:'FF137333'};
+  const ALT={bg:'FFF3E5F5',fg:'FF7B1FA2'},CHILD={bg:'FFF0F4FF',fg:'FF3D5170'};
+  const OK={bg:'FFE6F4EA',fg:'FF137333'},MISS={bg:'FFFCE8E6',fg:'FFC5221F'},NONE={bg:'FFF8F9FA',fg:'FF9AA0A6'};
+  const hdrs=['מק"ט','תיאור','סוג','כמות','מלאי','סטטוס','הערה','חלופה מאושרת'];
+  const rows=[hdrs.map(hdr)];
+  const rowH=[{hpt:20}];
   bom.forEach(item=>{
-    const qty=stockMap[item.k.toLowerCase()];const alt=findBestAlt(item.k);const inS=qty!==undefined&&qty>0;
-    const rowFill=qty===undefined?'FFFFFFFF':inS?'FFE6F4EA':'FFFCE8E6';const rowFont=qty===undefined?'FF202124':inS?'FF137333':'FFD93025';
-    rows.push([xlCell(item.k,rowFill,rowFont,true),xlCell(item.v,rowFill,rowFont,false),xlCell(item.note||'',rowFill,'FF555555',false),xlCell(qty!==undefined?String(qty):'—',rowFill,rowFont,true),xlCell('ראשי',rowFill,'FF555555',false),xlCell(alt?alt.item.k:'—','FFFDF5FF','FF7B1FA2',false),xlCell(alt?String(alt.score):'','FFFDF5FF','FF7B1FA2',false)]);
-    item.children.forEach(c=>{const cs=stockMap[c.k.toLowerCase()];const ci=cs!==undefined&&cs>0;const cFill=ci?'FFF1F8E9':'FFFFF8E1';const cFont=ci?'FF2E7D32':'FFE65100';rows.push([xlCell(`↳ ${c.k}`,'FFF8F9FA','FF3D5170',false),xlCell(c.v,'FFF8F9FA','FF555555',false),xlCell('','FFF8F9FA','FF555555',false),xlCell(cs!==undefined?String(cs):'—',cFill,cFont,true),xlCell(c.type,'FFF8F9FA','FF777777',false),xlCell('','FFF8F9FA','',false),xlCell('','FFF8F9FA','',false)]);});
+    const qty=stockMap[item.k.toLowerCase()];
+    const inS=qty!==undefined&&qty>0;
+    const tp=item.itemType==='TOOL'?TOOL:item.itemType==='ACC'?ACC:REQ;
+    const tl=item.itemType==='TOOL'?'🔧 כלי':item.itemType==='ACC'?'🔗 נלווה':'⚡ חובה';
+    const stC=qty===undefined?NONE:inS?OK:MISS;
+    const stL=qty===undefined?'לא נבדק':inS?'✅ '+qty:'⚠️ 0';
+    rows.push([xc(item.k,tp.bg,tp.fg,true),xc(item.v,tp.bg,tp.fg,false),xc(tl,tp.bg,tp.fg,true),xc(item.qty||1,'FFFFFFFF','FF333333',true),xc(qty!=null?qty:'—',stC.bg,stC.fg,true),xc(stL,stC.bg,stC.fg,false),xc(item.note||'','FFFFFFFF','FF555555',false),xc(item.approvedAlt||'',item.approvedAlt?ALT.bg:'FFF8F9FA',item.approvedAlt?ALT.fg:'FFAAAAAA',!!item.approvedAlt)]);
+    rowH.push({hpt:17});
+    if(item.approvedAlt){const ai=db.find(x=>x.k.toLowerCase()===item.approvedAlt.toLowerCase())||{k:item.approvedAlt,v:''};const aq=stockMap[item.approvedAlt.toLowerCase()];const aS=aq!=null&&aq>0;rows.push([xc('✅ '+ai.k,ALT.bg,ALT.fg,true),xc(ai.v,ALT.bg,ALT.fg,false),xc('חלופה',ALT.bg,ALT.fg,true),xc('',ALT.bg,ALT.fg,false),xc(aq!=null?aq:'—',aS?OK.bg:MISS.bg,aS?OK.fg:MISS.fg,false),xc(aq==null?'לא נבדק':aS?'✅':'⚠️',aS?OK.bg:MISS.bg,aS?OK.fg:MISS.fg,false),xc('',ALT.bg,ALT.fg,false),xc('',ALT.bg,ALT.fg,false)]);rowH.push({hpt:15});}
+    item.children.forEach(c=>{const cs=stockMap[c.k.toLowerCase()];const ci=cs!=null&&cs>0;const cT=c.type==='TOOL'?TOOL:ACC;const cSt=cs==null?NONE:ci?OK:MISS;rows.push([xc('  '+c.k,CHILD.bg,CHILD.fg,false),xc(c.v||'',CHILD.bg,CHILD.fg,false),xc(c.type==='TOOL'?'🔧 כלי':'🔗 נלווה',cT.bg,cT.fg,false),xc(1,'FFFFFFFF','',false),xc(cs!=null?cs:'—',cSt.bg,cSt.fg,false),xc(cs==null?'לא נבדק':ci?'✅ '+cs:'⚠️ חסר',cSt.bg,cSt.fg,false),xc('',CHILD.bg,CHILD.fg,false),xc('',CHILD.bg,CHILD.fg,false)]);rowH.push({hpt:14});});
   });
-  const ws=makeWs(rows);
-  ws['!cols']=[{wch:28},{wch:36},{wch:18},{wch:8},{wch:8},{wch:26},{wch:8}];
-  XLSX.utils.book_append_sheet(wb,ws,'BOM');XLSX.writeFile(wb,'BOM.xlsx');toast('Excel הורד ✅','');
+  const ws={};rows.forEach((row,r)=>row.forEach((cell,c)=>{ws[XLSX.utils.encode_cell({r,c})]=cell;}));
+  ws['!ref']=XLSX.utils.encode_range({s:{r:0,c:0},e:{r:rows.length-1,c:7}});
+  ws['!cols']=[{wch:26},{wch:32},{wch:10},{wch:6},{wch:8},{wch:12},{wch:20},{wch:22}];
+  ws['!rows']=rowH;
+  XLSX.utils.book_append_sheet(wb,ws,'BOM');
+  XLSX.writeFile(wb,'BOM_Dazura.xlsx',{bookType:'xlsx',cellStyles:true});
+  toast('Excel הורד ✅','');
 });
 
 /* ══ EXPORT STOCK REPORT ══ */
@@ -1771,6 +1924,7 @@ document.getElementById('clearStockBtn')?.addEventListener('click',()=>{
 
 /* ══ MISSING EXPORT BUTTON LISTENER ══ */
 document.getElementById('exportMissingBtn')?.addEventListener('click',()=>{
+  if(window._xlsxFailed||typeof XLSX==='undefined'){toast('Excel לא זמין — פתח מדפדפן עם חיבור אינטרנט','');return;}
   if(!isApproved)return;
   const wb=XLSX.utils.book_new();
   function xm(v,bg,fg,bold){return{v:String(v||''),t:'s',s:{fill:{patternType:'solid',fgColor:{rgb:bg}},font:{bold:!!bold,color:{rgb:fg},name:'Calibri',sz:10},alignment:{horizontal:'right',vertical:'center'}}};}
@@ -2262,7 +2416,8 @@ function renderDependencyGraph(){
 
     // Node box
     ctx.beginPath();
-    ctx.roundRect(n.x - r, n.y - h/2, r*2, h, 6);
+    if(ctx.roundRect) ctx.roundRect(n.x - r, n.y - h/2, r*2, h, 6);
+    else ctx.rect(n.x - r, n.y - h/2, r*2, h);
     ctx.fillStyle = n.color + (n.type==='main'?'22':'15');
     ctx.fill();
     ctx.strokeStyle = n.color;
@@ -2422,10 +2577,9 @@ const _rebuildAdv = ()=>{ const p=document.getElementById('advSearchPanel'); if(
 
 
 /* ══ WINDOW ERROR HANDLER ══ */
-window.onerror=function(msg,src,line,col,err){
-  if(msg==='Script error.'||(!src&&!line))return true;
-  console.warn('[Dazura]',msg,'@',src+':'+line);
-  return false;
+/* Error handling moved to <head> — runs before any external scripts */
+window.onunhandledrejection=function(e){
+  if(e.reason){var r=String(e.reason);if(r.indexOf('fetch')>=0||r.indexOf('NetworkError')>=0)e.preventDefault();}
 };
 window.onunhandledrejection=function(e){
   if(e.reason&&String(e.reason).includes('fetch'))return;
@@ -2693,8 +2847,191 @@ switchTab=function(t){
 };
 
 // Also init on first load
+
+// ── Image URL input ──
+(function(){
+  const itemImgEl=document.getElementById('itemImg');
+  if(itemImgEl&&itemImgEl.parentNode){
+    const imgUrlInput=document.createElement('input');
+    imgUrlInput.type='text';imgUrlInput.placeholder='או הכנס URL תמונה...';
+    imgUrlInput.style.cssText='margin-bottom:11px;';
+    imgUrlInput.addEventListener('input',()=>{
+      const url=imgUrlInput.value.trim();
+      if(url.match(/^https?:\/\/.+\.(jpg|jpeg|png|gif|webp|svg)/i)){
+        currentBase64=url;
+        const p=document.getElementById('setupPreview');
+        if(p){p.src=url;p.style.display='block';}
+      }
+    });
+    itemImgEl.parentNode.insertBefore(imgUrlInput,itemImgEl.nextSibling);
+  }
+})();
+
+// ── compareBOMWithVersion ──
+function compareBOMWithVersion(vi){
+  if(vi===undefined||!versions[vi])return;
+  const old2=versions[vi].items||[];
+  const cur=bom;
+  const oldMap=Object.fromEntries(old2.map(x=>[x.k,x]));
+  const curMap=Object.fromEntries(cur.map(x=>[x.k,x]));
+  const allKeys=[...new Set([...Object.keys(oldMap),...Object.keys(curMap)])];
+  let tbl='<table style="width:100%;border-collapse:collapse;font-size:.85em;">';
+  tbl+=`<tr style="background:var(--th)"><th style="padding:6px;text-align:right;">מק"ט</th><th>ישן</th><th>נוכחי</th><th>שינוי</th></tr>`;
+  allKeys.forEach(k=>{
+    const o=oldMap[k],c2=curMap[k];
+    let change='',bg='';
+    if(!o){change='✅ נוסף';bg='var(--stock-ok-bg)';}
+    else if(!c2){change='❌ הוסר';bg='var(--stock-miss-bg)';}
+    else if((o.qty||1)!==(c2.qty||1)){change='כמות: '+(o.qty||1)+'→'+(c2.qty||1);bg='var(--bom-alt)';}
+    else{change='ללא שינוי';}
+    tbl+=`<tr style="background:${bg};border-bottom:1px solid var(--border);"><td style="padding:5px 8px;font-weight:bold;">${esc(k)}</td><td style="padding:5px 8px;">${o?esc(o.v):'-'}</td><td style="padding:5px 8px;">${c2?esc(c2.v):'-'}</td><td style="padding:5px 8px;">${change}</td></tr>`;
+  });
+  tbl+='</table>';
+  const el2=document.getElementById('versionDiff');
+  if(el2){el2.style.display='block';el2.innerHTML='<div class="card" style="border:2px solid var(--alt);margin-top:10px;"><h4 style="margin:0 0 9px;color:var(--alt);">📊 השוואה: '+esc(versions[vi].name)+' vs נוכחי</h4>'+tbl+'</div>';}
+}
+
+// ── bomCostBadge in renderBOM ──
+const _origRenderBOM_cost2=renderBOM;
+renderBOM=function(){
+  _origRenderBOM_cost2();
+  const cost=typeof calcBOMCost==='function'?calcBOMCost():0;
+  if(cost>0){
+    let badge=document.getElementById('bomCostBadge');
+    if(!badge){badge=document.createElement('span');badge.id='bomCostBadge';badge.style.cssText='font-size:.82em;padding:4px 10px;border-radius:6px;background:var(--tag-custom-bg);color:var(--tag-custom-c);font-weight:bold;margin-right:6px;';const hw=document.getElementById('bomHealthWrap');if(hw&&hw.parentNode)hw.parentNode.insertBefore(badge,hw);}
+    badge.textContent='💰 ₪'+Math.round(cost).toLocaleString();
+  }
+};
+
+// ── Min stock alerts in dashboard ──
+const _origRenderDash_alerts=renderDashboard;
+renderDashboard=function(){
+  _origRenderDash_alerts();
+  const alerts=db.filter(item=>{
+    if(!item.minStock||item.minStock<=0)return false;
+    const qty=stockMap[item.k.toLowerCase()];
+    return qty!==undefined&&qty<item.minStock;
+  });
+  if(!alerts.length)return;
+  const el3=document.getElementById('dashDups');
+  if(!el3)return;
+  const div=document.createElement('div');
+  div.style.cssText='margin-top:14px;';
+  div.innerHTML='<h4 style="margin:0 0 8px;color:var(--danger);">⚠️ התראות מלאי מינימום ('+alerts.length+')</h4><table style="width:100%;border-collapse:collapse;font-size:.85em;"><tr style="background:var(--th)"><th style="padding:5px 8px;text-align:right;">מק"ט</th><th>תיאור</th><th>במלאי</th><th>מינימום</th><th>להזמין</th></tr>'+
+    alerts.map(item=>{const qty=stockMap[item.k.toLowerCase()];return '<tr style="background:var(--stock-miss-bg);border-bottom:1px solid var(--border);"><td style="padding:4px 8px;font-weight:bold;color:var(--danger);">'+esc(item.k)+'</td><td style="padding:4px 8px;">'+esc(item.v)+'</td><td style="padding:4px 8px;color:var(--danger);font-weight:bold;">'+qty+'</td><td style="padding:4px 8px;">'+item.minStock+'</td><td style="padding:4px 8px;color:var(--danger);font-weight:bold;">'+(item.minStock-qty)+'</td></tr>';}).join('')+
+    '</table>';
+  el3.appendChild(div);
+};
+
 document.getElementById('q')?.addEventListener('input',()=>{clearTimeout(searchDebounce);searchDebounce=setTimeout(solve,80);});
 document.getElementById('precisionRange')?.addEventListener('input',()=>{clearTimeout(searchDebounce);searchDebounce=setTimeout(solve,80);});
+
+
+
+
+/* ══ DEPENDENCY GRAPH ══ */
+function renderDepGraph(){
+  const canvas=document.getElementById('depGraph');
+  if(!canvas||!bom.length){
+    const gc=document.getElementById('depGraphContainer');
+    if(gc)gc.style.display='none';
+    toast('הוסף פריטים ל-BOM תחילה','');
+    return;
+  }
+  const gc=document.getElementById('depGraphContainer');
+  if(gc)gc.style.display='block';
+
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width=Math.max(canvas.parentElement?.offsetWidth||700,600);
+  const H=canvas.height=Math.max(300,bom.length*90);
+
+  ctx.clearRect(0,0,W,H);
+  // Background
+  ctx.fillStyle='#ffffff';
+  ctx.fillRect(0,0,W,H);
+
+  const nodes={};const edges=[];
+  const COL_MAIN='#0066FF',COL_TOOL='#00A550',COL_ACC='#7C3AED',COL_ALT='#E91E63';
+
+  bom.forEach((item,i)=>{
+    nodes[item.k]={x:W*0.22,y:55+i*90,label:item.k,color:COL_MAIN,main:true};
+    item.children.forEach((c,j)=>{
+      const key=c.k+'__'+i+'__'+j;
+      const color=c.type==='TOOL'?COL_TOOL:COL_ACC;
+      nodes[key]={x:W*0.72,y:55+i*90+(j-(item.children.length-1)/2)*40,label:c.k,color,type:c.type};
+      edges.push({from:item.k,to:key,color,label:c.type==='TOOL'?'כלי':'נלווה'});
+    });
+    if(item.approvedAlt){
+      const ak='ALT__'+i;
+      nodes[ak]={x:W*0.22,y:nodes[item.k].y+36,label:'✅ '+item.approvedAlt,color:COL_ALT,alt:true};
+      edges.push({from:item.k,to:ak,color:COL_ALT,dashed:true,label:'חלופה'});
+    }
+  });
+
+  // Draw edges
+  edges.forEach(e=>{
+    const f=nodes[e.from],t=nodes[e.to];
+    if(!f||!t)return;
+    ctx.beginPath();
+    ctx.moveTo(f.x+48,f.y);
+    ctx.bezierCurveTo(f.x+120,f.y,t.x-90,t.y,t.x-48,t.y);
+    ctx.strokeStyle=e.color||'#999';
+    ctx.lineWidth=e.dashed?1.5:2;
+    if(e.dashed)ctx.setLineDash([6,4]);else ctx.setLineDash([]);
+    ctx.globalAlpha=0.65;
+    ctx.stroke();
+    ctx.setLineDash([]);ctx.globalAlpha=1;
+    // Edge label
+    if(e.label){
+      const mx=f.x+48+(t.x-48-f.x-48)/2;
+      const my=(f.y+t.y)/2;
+      ctx.fillStyle=e.color||'#999';
+      ctx.font='9px Segoe UI';ctx.textAlign='center';
+      ctx.fillText(e.label,mx,my-4);
+    }
+  });
+
+  // Draw nodes
+  Object.values(nodes).forEach(n=>{
+    const rw=50,rh=22,rx=n.x-rw,ry=n.y-rh/2;
+    // Box
+    ctx.beginPath();
+    if(ctx.roundRect)ctx.roundRect(rx,ry,rw*2,rh,5);
+    else ctx.rect(rx,ry,rw*2,rh);
+    ctx.fillStyle=n.color+'22';ctx.fill();
+    ctx.strokeStyle=n.color;ctx.lineWidth=n.main?2.5:1.5;ctx.stroke();
+    // Label
+    ctx.fillStyle='#1a1a2e';ctx.font=(n.main?'bold ':'')+Math.min(11,12)+'px Segoe UI';
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    let lbl=n.label;
+    while(ctx.measureText(lbl+'…').width>rw*2-10&&lbl.length>3)lbl=lbl.slice(0,-1);
+    if(lbl!==n.label)lbl+='…';
+    ctx.fillText(lbl,n.x,n.y);
+    // Stock dot
+    const qty=stockMap[n.label?.replace('✅ ','').toLowerCase()];
+    if(qty!==undefined){
+      ctx.beginPath();ctx.arc(n.x+rw-6,n.y-rh/2+5,4,0,Math.PI*2);
+      ctx.fillStyle=qty>0?'#00A550':'#E02020';ctx.fill();
+    }
+  });
+
+  // Legend
+  ctx.font='10px Segoe UI';ctx.textAlign='left';ctx.globalAlpha=.85;
+  [[COL_MAIN,'ראשי'],[COL_TOOL,'כלי'],[COL_ACC,'נלווה'],[COL_ALT,'חלופה']].forEach(([c,l],i)=>{
+    ctx.fillStyle=c;ctx.fillRect(10,H-55+i*13,10,9);
+    ctx.fillStyle='#444';ctx.fillText(l,25,H-50+i*13);
+  });
+  ctx.globalAlpha=1;
+}
+
+// Hook depGraphBtn
+document.getElementById('depGraphBtn')?.addEventListener('click',()=>{
+  const gc=document.getElementById('depGraphContainer');
+  if(!gc)return;
+  const visible=gc.style.display!=='none';
+  gc.style.display=visible?'none':'block';
+  if(!visible)setTimeout(renderDepGraph,50);
+});
 
 
 })();
