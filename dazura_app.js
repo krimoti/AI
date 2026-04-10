@@ -2798,9 +2798,71 @@ function _rescanBOMAfterWireAdded(newWireKey){
   const re=window._dazuraRules;
 
   let updated=0;
+  function _rescanBOMAfterWireAdded(newWireKey){
+  const wireItem=db.find(x=>x.k===newWireKey);
+  if(!wireItem||!_isWireItem(wireItem))return;
+
+  const wire_api=window._dazuraWire;
+  let wireData=null;
+  if(wire_api) wireData=wire_api.dazuraSelectShrink(wireItem);
+  if(!wireData) return;
+
+  let updated=0;
   bom.forEach(bomItem=>{
     const dbItem=db.find(x=>x.k===bomItem.k)||bomItem;
-    if(!dbItem.rules||!dbItem.rules.length)return;
+    const accPrefixes=(dbItem.acc||[]).map(a=>a.toUpperCase().trim());
+    const hasRules=dbItem.rules&&dbItem.rules.length>0;
+    if(!accPrefixes.length&&!hasRules)return;
+
+    // טפל ב-acc prefixes (RSFR, ATUM וכו')
+    accPrefixes.forEach(prefix=>{
+      const catalog=wire_api.SHRINK_CATALOG[prefix];
+      if(!catalog)return; // לא prefix של shrink
+      const shrink=wire_api.selectShrink(prefix, wireData.od_mm);
+      if(!shrink||shrink.sfx==='?')return;
+      const resolvedPN=shrink.fullPN; // e.g. RSFR-3/16
+      // הוסף child עם מזהה ייחודי לפי חוט
+      const childKey=`${resolvedPN}__${newWireKey}`;
+      if(bomItem.children.some(c=>c._uid===childKey))return;
+      const existing=db.find(x=>x.k.toLowerCase()===resolvedPN.toLowerCase());
+      bomItem.children.push({
+        k:resolvedPN,
+        v:existing?existing.v:`Shrink ${prefix} ${shrink.sfx}`,
+        img:existing?existing.img:'',
+        type:'ACC',
+        resolved:true,
+        resolvedFrom:newWireKey,
+        note:`${shrink.sfx} — OD=${wireData.od_mm.toFixed(1)}mm (${wireData.specLabel||wireData.awg+'AWG'})`,
+        _uid:childKey
+      });
+      updated++;
+    });
+
+    // טפל ב-rules (לוגיקה קיימת)
+    if(hasRules&&wire_api){
+      const params={awg:wireData.awg,voltage:String(wireData.voltage||''),
+                    insulation:wireData.insulation||'',od_mm:String(wireData.od_mm)};
+      (dbItem.rules||[]).forEach(rule=>{
+        const pval=params[rule.param];
+        if(!pval||String(pval).toLowerCase()!==String(rule.value).toLowerCase())return;
+        if(bomItem.children.some(c=>c.k===rule.then))return;
+        const existing=db.find(x=>x.k.toLowerCase()===rule.then.toLowerCase());
+        bomItem.children.push({
+          k:rule.then,v:existing?existing.v:(rule.note||'מחושב'),
+          img:existing?existing.img:'',type:'ACC',resolved:true,
+          resolvedFrom:newWireKey,note:rule.note||''
+        });
+        updated++;
+      });
+    }
+  });
+
+  if(updated){
+    save(LS.BOM,bom);
+    renderBOM();
+    toast(`🔗 נוספו ${updated} שרוולים אוטומטיים עבור ${newWireKey}`,'');
+  }
+}
 
     const results=re.evaluateRules(dbItem,params);
     if(!results.length)return;
