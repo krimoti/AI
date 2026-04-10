@@ -577,7 +577,19 @@ function addToBOM(k){
   // Build base children
   const children=[];
   item.req.forEach(rk=>{const c=db.find(x=>x.k.toLowerCase()===rk.toLowerCase());children.push({k:rk,v:c?c.v:'חסר',img:c?c.img:'',type:'REQ'});});
-  (item.acc||[]).forEach(ak=>{const c=db.find(x=>x.k.toLowerCase()===ak.toLowerCase());children.push({k:ak,v:c?c.v:'נלווה',img:c?c.img:'',type:'ACC'});});
+  // Add acc items — skip raw shrink prefixes (they'll be resolved by wire scan)
+  const SHRINK_PREFIXES_SET=new Set(['rsfr','atum','rt','fp301','rsfr-h','rsf','mwtm','cbit']);
+  (item.acc||[]).forEach(ak=>{
+    const akl=ak.toLowerCase().replace(/[-\s]/g,'');
+    const isShrinkPrefix=SHRINK_PREFIXES_SET.has(akl)||SHRINK_PREFIXES_SET.has(ak.toLowerCase());
+    const existsInDB=db.some(x=>x.k.toLowerCase()===ak.toLowerCase());
+    if(isShrinkPrefix&&!existsInDB){
+      // Will be resolved by _autoResolveFromBOM — skip adding raw prefix now
+      return;
+    }
+    const c=db.find(x=>x.k.toLowerCase()===ak.toLowerCase());
+    children.push({k:ak,v:c?c.v:'נלווה',img:c?c.img:'',type:'ACC'});
+  });
   if(item.tool){
     const tc=db.find(x=>x.k.toLowerCase()===item.tool.toLowerCase());
     const tQty=stockMap[item.tool.toLowerCase()];
@@ -2712,7 +2724,18 @@ function _autoResolveFromBOM(item, children){
   if(!hasPrefixes&&!hasRules)return children;
 
   const wires=bom.filter(b=>{const d=db.find(x=>x.k===b.k)||b;return _isWireItem(d);});
-  if(!wires.length)return children;
+  if(!wires.length){
+    // No wires yet — add placeholder for each shrink prefix so user sees it
+    const ph=[...children];
+    (item.acc||[]).forEach(ak=>{
+      const akl=ak.toLowerCase().replace(/[-\s]/g,'');
+      const SHRINK_PREFIXES_SET=new Set(['rsfr','atum','rt','fp301','rsf']);
+      if(SHRINK_PREFIXES_SET.has(akl)&&!ph.some(c=>c.k.toLowerCase().startsWith(akl))){
+        ph.push({k:ak+'-(לחישוב)',v:'שרוול — יחושב עם הוספת חוט',img:'',type:'ACC',resolved:true,resolvedFrom:'ממתין לחוט'});
+      }
+    });
+    return ph;
+  }
 
   const resolvedChildren=[...children];
 
@@ -2822,6 +2845,10 @@ function _rescanBOMAfterWireAdded(newWireKey){
         const resolvedPN=shrink.fullPN;
         if(bomItem.children.some(c=>c.k===resolvedPN))return;
         const existing=db.find(x=>x.k.toLowerCase()===resolvedPN.toLowerCase());
+        // Remove placeholder if exists
+        const plIdx=bomItem.children.findIndex(c=>c.k===pfx+'-(לחישוב)'||c.k===pfx.toLowerCase()+'-(לחישוב)');
+        if(plIdx>=0)bomItem.children.splice(plIdx,1);
+        if(bomItem.children.some(c=>c.k===resolvedPN))return;
         bomItem.children.push({
           k:resolvedPN,
           v:existing?existing.v:`Shrink ${pfx} ${shrink.sfx}`,
