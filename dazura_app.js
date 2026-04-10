@@ -2798,6 +2798,8 @@ function _rescanBOMAfterWireAdded(newWireKey){
   const re=window._dazuraRules;
 
   let updated=0;
+   bom.forEach(bomItem=>{
+  const dbItem=db.find(x=>x.k===bomItem.k)||bomItem;
   function _rescanBOMAfterWireAdded(newWireKey){
   const wireItem=db.find(x=>x.k===newWireKey);
   if(!wireItem||!_isWireItem(wireItem))return;
