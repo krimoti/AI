@@ -597,21 +597,20 @@ function addToBOM(k){
     children.push({k:item.tool,v:tc?tc.v:'כלי',img:tc?tc.img:'',type:'TOOL',note:tNote});
   }
 
-  // Auto-resolve: if item has rules AND wires exist in BOM → resolve automatically
+  // Auto-resolve: if item has acc shrink prefixes OR rules → check for wires
   let finalChildren=children;
-  if(item.rules&&item.rules.length>0){
+  const SHRINK_PFX=new Set(['rsfr','atum','rt','fp301','rsf']);
+  const hasAccPrefixes=(item.acc||[]).some(ak=>SHRINK_PFX.has(ak.toLowerCase().replace(/[-\s]/g,'')));
+  const hasRules=item.rules&&item.rules.length>0;
+
+  if(hasAccPrefixes||hasRules){
     const wireCount=bom.filter(b=>_isWireItem(db.find(x=>x.k===b.k)||b)).length;
-    if(wireCount>0){
-      // Wires exist → auto-resolve silently
-      finalChildren=_autoResolveFromBOM(item,children);
-      const added=finalChildren.length-children.length;
-      bom.push({...item,children:finalChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
-      save(LS.BOM,bom);renderBOM();resetApproval();
-      toast('נוסף: '+k+(added?' + '+added+' אביזרים אוטומטיים 🔗':''),'');
-    } else {
-      // No wires yet → show dialog to enter params manually
-      _showRulesDialog(item,children,k);
-    }
+    // Always call autoResolve — it handles both "wires exist" and "no wires" cases
+    finalChildren=_autoResolveFromBOM(item,children);
+    const added=finalChildren.length-children.length;
+    bom.push({...item,children:finalChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
+    save(LS.BOM,bom);renderBOM();resetApproval();
+    toast('נוסף: '+k+(added?' + '+added+' אביזרים אוטומטיים 🔗':''),'');
   } else {
     bom.push({...item,children:finalChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
     save(LS.BOM,bom);renderBOM();resetApproval();toast('נוסף: '+k,'');
@@ -2627,17 +2626,24 @@ const WIRE_KEYWORDS=['wire','cable','חוט','כבל','conductor','awg','gauge']
 
 function _isWireItem(item){
   if(!item)return false;
-  // Check family
   const fam=(item.c||'').toLowerCase();
-  if(WIRE_FAMILIES.some(w=>fam.includes(w)))return true;
-  // Check description
   const desc=(item.v||'').toLowerCase();
-  if(WIRE_KEYWORDS.some(w=>desc.includes(w)))return true;
-  // Check for AWG custom field
-  const hasAWG=(item.custom||[]).some(f=>f.label.match(/awg|gauge|חתך|עובי|mm2|mm²/i));
-  if(hasAWG)return true;
-  // Check for AWG in description
-  if(/\d+awg|\d+\s*mm[²2]/i.test(item.v||''))return true;
+  const key=(item.k||'').toLowerCase();
+  const allText=fam+' '+desc+' '+key;
+  // Exclude non-wire items even if they mention AWG (terminals, connectors, shrink)
+  const NON_WIRE=['terminal','connector','contact','lug','splice','ferrule',
+    'shrink','heat shrink','קונקטור','מחבר','נעל','נעלי','מגע'];
+  if(NON_WIRE.some(w=>fam.includes(w)||desc.includes(w)))return false;
+  // Family check
+  if(WIRE_FAMILIES.some(w=>fam.includes(w)))return true;
+  // Description / key keywords
+  if(WIRE_KEYWORDS.some(w=>allText.includes(w)))return true;
+  // AWG custom field
+  if((item.custom||[]).some(f=>f.label.match(/awg|gauge|חתך|עובי|mm2|mm²/i)))return true;
+  // AWG pattern in description or key
+  if(/\d+\s*awg|awg\s*\d+|\d+\s*ga(?:uge)?|\d+\.?\d*\s*mm[²2]/i.test(allText))return true;
+  // UL wire spec in key or description
+  if(/ul1015|ul1569|ul1007|m22759|li55|hookup|hook.up/i.test(allText))return true;
   return false;
 }
 
