@@ -1293,33 +1293,68 @@ function selectShrink(prefix, wire_od_max_mm) {
    MAIN API
 ═══════════════════════════════════════════════════════════ */
 function dazuraSelectShrink(wireItem) {
-  // Extract params from wire item
   const custom=wireItem.custom||[];
-  const desc=(wireItem.v||'').toLowerCase();
+  const full=((wireItem.k||'')+' '+(wireItem.v||'')+' '+
+    custom.map(f=>f.label+' '+f.value).join(' ')).toLowerCase();
 
-  const awgField=custom.find(f=>/awg|gauge/i.test(f.label));
-  const specField=custom.find(f=>/spec|standard|ul|mil|li\d|תקן/i.test(f.label));
-  const vField=custom.find(f=>/voltage|volt|מתח/i.test(f.label));
-  const insField=custom.find(f=>/insulation|בידוד|חומר/i.test(f.label));
-
-  let awg=awgField?.value?.replace(/\D/g,'')||desc.match(/(\d+)\s*awg/)?.[1];
-  let specStr=specField?.value||desc.match(/ul\d+|m22759[/-]\d+|li\s*\d+/i)?.[0]||'';
-  const voltage=parseInt(vField?.value)||parseInt(desc.match(/(\d{2,4})\s*v/i)?.[1])||300;
-  const insulation=insField?.value?.toLowerCase()||
-    (/ptfe|teflon/i.test(desc)?'ptfe':
-     /silicone/i.test(desc)?'silicone':'pvc');
-
-  if(!specStr){
-    specStr=`generic_${insulation}_${voltage}v`;
+  // ── AWG — broad pattern matching ──
+  let awg=null;
+  const awgPatterns=[
+    /(\d+)\s*awg/,/awg\s*[#\-]?\s*(\d+)/,/#\s*(\d+)\s*wire/,
+    /(\d+)\s*ga(?:uge)?/,/gauge\s*[:\-]?\s*(\d+)/
+  ];
+  for(const p of awgPatterns){const m=full.match(p);if(m){awg=m[1];break;}}
+  // From custom field
+  if(!awg){
+    const f=custom.find(f=>/awg|gauge|חתך|עובי/.test(f.label.toLowerCase()));
+    if(f)awg=(f.value.match(/\d+/)||[])[0];
   }
-
+  // From mm² conversion
+  if(!awg){
+    const mm2Match=full.match(/([\d.]+)\s*mm[²2]/);
+    if(mm2Match){
+      const mm2=parseFloat(mm2Match[1]);
+      const AWG_MM2={'0.05':'30','0.08':'28','0.14':'26','0.22':'24',
+        '0.35':'22','0.5':'20','0.75':'18','1.0':'17','1.5':'16',
+        '2.5':'14','4.0':'12','6.0':'10','10.0':'8'};
+      const best=Object.keys(AWG_MM2).reduce((a,b)=>
+        Math.abs(parseFloat(a)-mm2)<Math.abs(parseFloat(b)-mm2)?a:b);
+      if(Math.abs(parseFloat(best)-mm2)<0.2)awg=AWG_MM2[best];
+    }
+  }
   if(!awg)return null;
 
-  const odData=getWireOD(awg,specStr);
+  // ── Voltage ──
+  let voltage=300;
+  const vf=custom.find(f=>/voltage|volt|מתח|rating/i.test(f.label));
+  if(vf)voltage=parseInt((vf.value.match(/\d+/)||[])[0])||300;
+  else{const vm=full.match(/(\d{2,4})\s*v(?:olt|dc|ac|\/)?(?:\s|$)/);
+    if(vm)voltage=parseInt(vm[1]);}
+
+  // ── Insulation ──
+  let insulation='pvc';
+  const inf=custom.find(f=>/insulation|בידוד|material|חומר/i.test(f.label));
+  if(inf){const iv=inf.value.toLowerCase();
+    if(/ptfe|teflon/.test(iv))insulation='ptfe';
+    else if(/silicone|סיליקון/.test(iv))insulation='silicone';}
+  else if(/ptfe|teflon/.test(full))insulation='ptfe';
+  else if(/silicone|סיליקון/.test(full))insulation='silicone';
+
+  // ── Spec ──
+  let specStr='';
+  const sf=custom.find(f=>/spec|standard|תקן|ul|mil|norm/i.test(f.label));
+  if(sf)specStr=sf.value.toLowerCase().replace(/\s/g,'');
+  if(!specStr){
+    const sm=full.match(/ul\d{4}|m22759[\/\-]\d+|li\s*55\w+|vde\s*\d+/i);
+    if(sm)specStr=sm[0].replace(/\s/g,'');
+  }
+  if(!specStr)specStr=`generic_${insulation}_${voltage}v`;
+
+  const odData=getWireOD(awg,specStr)||getWireOD(awg,`generic_${insulation}_${voltage}v`);
   if(!odData)return null;
 
-  return {awg, spec:odData.spec, specLabel:odData.specLabel,
-          od_mm:odData.od_mm, voltage, insulation};
+  return{awg,spec:odData.spec,specLabel:odData.specLabel,
+         od_mm:odData.od_mm,voltage,insulation};
 }
 
 if(typeof window!=='undefined'){
