@@ -832,7 +832,7 @@ function renderDBTable(){
     const isDup=dupKeys.has(i.k);
     const ct=(i.custom||[]).map(f=>`<span class="tag tag-custom">${esc(f.label)}:${esc(f.value)}</span>`).join('');
     const tr=document.createElement('tr');if(isDup)tr.className='dup-row';
-    tr.innerHTML=`<td><input type="checkbox" ${selectedKeys.has(i.k)?'checked':''} data-k="${esc(i.k)}"></td><td><img src="${i.img}" class="img-preview" style="width:32px;height:32px;" alt=""></td><td><b>${isDup?`<span class="dup-badge">כפול?</span>`:''} ${esc(i.k)}</b></td><td>${esc(i.c)}</td><td style="max-width:160px;">${ct||'—'}</td><td style="white-space:nowrap;"><button class="btn btn-ghost" data-edit="${esc(i.k)}" style="padding:4px 9px;font-size:.85em;">ערוך</button> <button class="btn btn-ghost" style="padding:4px 9px;font-size:.85em;color:var(--danger);" data-del="${esc(i.k)}">מחק</button></td>`;
+    tr.innerHTML=`<td><input type="checkbox" ${selectedKeys.has(i.k)?'checked':''} data-k="${esc(i.k)}"></td><td><img src="${i.img}" class="img-preview" style="width:32px;height:32px;" alt=""></td><td><b>${isDup?`<span class="dup-badge">כפול?</span>`:''} ${esc(i.k)}</b></td><td>${esc(i.c)}</td><td style="max-width:160px;">${ct||'—'}</td><td style="white-space:nowrap;"><button class="btn btn-ghost" data-edit="${esc(i.k)}" style="padding:4px 8px;font-size:.82em;" title="ערוך">✏️ ערוך</button> <button class="btn btn-ghost" style="padding:4px 8px;font-size:.82em;color:var(--danger);" data-del="${esc(i.k)}" title="מחק">🗑</button></td>`;
     body.appendChild(tr);
     tr.querySelector('input[type=checkbox]').addEventListener('change',function(){if(this.checked)selectedKeys.add(this.dataset.k);else selectedKeys.delete(this.dataset.k);updateMultiBar();});
   });
