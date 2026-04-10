@@ -336,6 +336,16 @@ body.t-dark .dup-row td,body.t-military .dup-row td,body.t-purple .dup-row td,bo
 #scannerModal{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9999;display:none;align-items:center;justify-content:center;}
 /* ── MOBILE ── */
 @media(max-width:768px){
+  /* DB table mobile */
+  #db-manage-tab table{font-size:.78em;}
+  #db-manage-tab td,#db-manage-tab th{padding:4px 5px;}
+  #db-manage-tab .img-preview{width:24px!important;height:24px!important;}
+  #db-manage-tab [data-edit],[data-del]{padding:4px 7px!important;font-size:.75em!important;}
+  #db-manage-tab th:nth-child(5){display:none;}  /* hide מאפיינים on mobile */
+  #db-manage-tab td:nth-child(5){display:none;}  /* hide מאפיינים on mobile */
+  /* BOM table mobile */
+  #bomTable{font-size:.78em;}
+  #bomTable th,#bomTable td{padding:4px 5px;}
   .nav-tabs{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;}
   .tab-btn{white-space:nowrap;flex-shrink:0;font-size:.78em;padding:7px 10px;}
   .container{grid-template-columns:1fr!important;}
@@ -480,8 +490,8 @@ body.t-solar{--primary:#EA580C;--primary-text:#fff;--success:#16A34A;--warning:#
    <button class="btn" style="padding:4px 9px;background:#fff;color:var(--danger);border-color:var(--danger);" id="deleteSelBtn">🗑 מחק נבחרים</button>
   </div>
   <div id="dupWarning" style="display:none;background:var(--warning);color:#000;border-radius:7px;padding:8px 12px;margin-bottom:9px;font-size:.88em;font-weight:bold;"></div>
-  <div style="max-height:580px;overflow-y:auto;">
-   <table>
+  <div style="max-height:580px;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+   <table style="min-width:480px;">
     <thead><tr>
      <th style="width:30px;"><input type="checkbox" id="masterCheck"></th>
      <th>תמונה</th><th>מק''ט</th><th>משפחה</th><th>מאפיינים</th><th>פעולות</th>
