@@ -466,7 +466,7 @@ function solve(){
   const cosScores=queryTFIDF(q);
 
   const res=db.map((item,dbIdx)=>{
-    const area=(item.k+' '+item.v+' '+item.c+' '+(item.custom||[]).map(f=>f.label+' '+f.value).join(' ')).toLowerCase();
+    const area=(item.k+' '+item.v+' '+item.c+' '+(item.location||'')+' '+(item.custom||[]).map(f=>f.label+' '+f.value).join(' ')).toLowerCase();
     let score=0;
     const reasons=[];
 
@@ -479,23 +479,72 @@ function solve(){
     score+=cosPts;
     if(cos>0.15)reasons.push(`TF-IDF ${Math.round(cos*100)}%`);
 
-    // 3. Phonetic match on part number tokens
+    // 3. Phonetic match — part number AND description
     qTokens.forEach(qt=>{
+      // Part number phonetic
       const ps=phoneticSim(qt,item.k);
-      if(ps>0.6){score+=Math.round(ps*20);reasons.push(`צליל: ${item.k}`);}
-      // phonetic on description tokens
+      if(ps>=0.5){score+=Math.round(ps*22);if(!reasons.includes('צליל מק"ט'))reasons.push('צליל מק"ט');}
+
+      // Description word phonetic — threshold 0.5 (catches grey/gray, colour/color etc.)
       tokenize(item.v).forEach(dt=>{
+        if(dt.length<3)return;
         const ps2=phoneticSim(qt,dt);
-        if(ps2>0.8)score+=Math.round(ps2*8);
+        if(ps2>=0.5){
+          score+=Math.round(ps2*18);
+          if(!reasons.includes('צליל תיאור'))reasons.push('צליל תיאור');
+        }
+      });
+
+      // Custom field phonetic
+      (item.custom||[]).forEach(f=>{
+        tokenize(f.value).forEach(fv=>{
+          if(phoneticSim(qt,fv)>=0.7)score+=8;
+        });
       });
     });
 
-    // 4. Edit distance on part number (לתיאור typo)
+    // 4. Edit distance — part number AND description words
     qTokens.forEach(qt=>{
-      const ml=Math.max(qt.length,item.k.length)||1;
-      const ed=editDist(qt,item.k.toLowerCase());
-      if(ed<=2&&ml>3)score+=Math.round((1-ed/ml)*15);
+      // Part number — partial match + edit distance
+      const _kl=item.k.toLowerCase();
+      // Partial: query contained in part number (e.g. "dtm4" finds "DTM04-4P")
+      if(qt.length>=3){
+        if(_kl.includes(qt)){score+=Math.round(qt.length/_kl.length*40);if(!reasons.includes('חלקי'))reasons.push('חלקי');}
+        // Also check each segment (split by dash/dot)
+        else{
+          const segs=_kl.split(/[-_.]/);
+          segs.forEach(seg=>{
+            if(!seg)return;
+            // partial: query in segment
+            if(seg.includes(qt)&&qt.length>=3){score+=Math.round(qt.length/seg.length*30);if(!reasons.includes('חלקי'))reasons.push('חלקי');}
+            // edit distance against each segment (catches dtm4→dtm04)
+            else if(Math.abs(qt.length-seg.length)<=2){
+              const edSeg=editDist(qt,seg);
+              if(edSeg<=1&&seg.length>2){score+=Math.round((1-edSeg/Math.max(qt.length,seg.length))*25);if(!reasons.includes('קרוב'))reasons.push('קרוב');}
+            }
+          });
+        }
+      }
+      // Edit distance on full part number
+      const mlk=Math.max(qt.length,_kl.length)||1;
+      const edk=editDist(qt,_kl);
+      if(edk<=2&&mlk>3)score+=Math.round((1-edk/mlk)*18);
+
+      // Description words
+      tokenize(item.v).forEach(dt=>{
+        if(Math.abs(qt.length-dt.length)>3)return;
+        const ml2=Math.max(qt.length,dt.length)||1;
+        const ed2=editDist(qt,dt);
+        if(ed2<=1&&ml2>3)score+=Math.round((1-ed2/ml2)*12);
+        else if(ed2<=2&&ml2>4)score+=Math.round((1-ed2/ml2)*8);
+      });
     });
+
+    // 5. Semantic expansion score (from dazura_semantics.js)
+    if(typeof dazuraScore==='function'){
+      const semPts=dazuraScore(q,area);
+      if(semPts>0){score+=Math.round(semPts*0.5);if(semPts>25&&!reasons.includes('🧠 סמנטי'))reasons.push('🧠 סמנטי');}
+    }
 
     score=Math.min(score,100);
     if(score>thr)emitNeuralSignal(0,dbIdx,score,0);
@@ -516,7 +565,6 @@ function solve(){
   chat.querySelectorAll('.add-bom-btn').forEach(b=>b.addEventListener('click',()=>addToBOM(b.dataset.k)));
   chat.querySelectorAll('.tag-acc').forEach(t=>t.addEventListener('click',()=>addToBOM(t.dataset.k)));
 }
-document.getElementById('q').addEventListener('input',()=>{clearTimeout(searchDebounce);searchDebounce=setTimeout(solve,150);});
 document.getElementById('precisionRange').addEventListener('input',()=>{clearTimeout(searchDebounce);searchDebounce=setTimeout(solve,100);});
 
 /* ══ BOM ══ */
