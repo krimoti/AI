@@ -624,7 +624,13 @@ function renderBOM(){
 
   bom.forEach((item,idx)=>{
     const qty=stockMap[item.k.toLowerCase()],has=qty!==undefined,inS=has&&qty>0;
-    const alt=findBestAlt(item.k);
+    const alt=(()=>{
+      const a=findBestAlt(item.k);
+      if(!a)return null;
+      const dismissed=item.dismissedAlts||[];
+      if(dismissed.some(d=>d.toLowerCase()===a.item.k.toLowerCase()))return null;
+      return a;
+    })();
 
     // ── Status badge ──
     const stHtml=!has
