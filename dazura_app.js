@@ -2722,172 +2722,86 @@ function _getWireOD(awg, insulation){
 
 // Main function: when item with rules is added, auto-resolve from BOM wires
 function _autoResolveFromBOM(item, children){
-  const wire_api=window._dazuraWire;
-  const acc_prefixes=(item.acc||[]);  // e.g. ['RSFR', 'ATUM']
-  // If no acc prefixes defined, fall back to rules
-  const hasPrefixes=acc_prefixes.length>0;
-  const hasRules=item.rules&&item.rules.length>0;
-  if(!hasPrefixes&&!hasRules)return children;
+  const api=window._dazuraWire;
+  const SHRINK_PFX=new Set(['rsfr','atum','rt','fp301','rsf']);
+  const accPrefixes=(item.acc||[]).filter(a=>SHRINK_PFX.has(a.toLowerCase().replace(/[-\s]/g,'')));
+  if(!accPrefixes.length)return children;
 
   const wires=bom.filter(b=>{const d=db.find(x=>x.k===b.k)||b;return _isWireItem(d);});
   if(!wires.length){
-    // No wires yet — add placeholder for each shrink prefix so user sees it
+    // No wires yet — placeholder per prefix
     const ph=[...children];
-    (item.acc||[]).forEach(ak=>{
-      const akl=ak.toLowerCase().replace(/[-\s]/g,'');
-      const SHRINK_PREFIXES_SET=new Set(['rsfr','atum','rt','fp301','rsf']);
-      if(SHRINK_PREFIXES_SET.has(akl)&&!ph.some(c=>c.k.toLowerCase().startsWith(akl))){
-        ph.push({k:ak+'-(לחישוב)',v:'שרוול — יחושב עם הוספת חוט',img:'',type:'ACC',resolved:true,resolvedFrom:'ממתין לחוט'});
-      }
+    accPrefixes.forEach(pfx=>{
+      if(!ph.some(c=>c.k.toUpperCase().startsWith(pfx.toUpperCase())))
+        ph.push({k:pfx.toUpperCase()+'-(לחישוב)',v:'שרוול — יחושב עם הוספת חוט',
+                 img:'',type:'ACC',resolved:true,resolvedFrom:'ממתין לחוט'});
     });
     return ph;
   }
 
-  const resolvedChildren=[...children];
+  if(!api){console.warn('[Dazura] _dazuraWire not ready');return children;}
 
+  const result=[...children];
   wires.forEach(wireItem=>{
     const wireDB=db.find(x=>x.k===wireItem.k)||wireItem;
-
-    // Try new wire API first (spec-aware)
-    if(wire_api){
-      const wireData=wire_api.dazuraSelectShrink(wireDB);
-      if(wireData&&wireData.od_mm){
-        // For each acc prefix — select correct shrink size
-        acc_prefixes.forEach(prefix=>{
-          const pfx=prefix.toUpperCase();
-          if(!wire_api.SHRINK_CATALOG[pfx])return; // not a shrink tube prefix
-          const shrink=wire_api.selectShrink(pfx,wireData.od_mm);
-          if(!shrink||shrink.sfx==='?')return;
-          const resolvedPN=shrink.fullPN;
-          if(resolvedChildren.some(c=>c.k===resolvedPN))return;
-          const existing=db.find(x=>x.k.toLowerCase()===resolvedPN.toLowerCase());
-          const wireLabel=`${wireItem.k} (${wireData.awg}AWG ${wireData.specLabel||''})`;
-          const note=`${shrink.sfx} — OD=${wireData.od_mm.toFixed(1)}mm, ${wireData.specLabel||''}`;
-          resolvedChildren.push({
-            k:resolvedPN,
-            v:existing?existing.v:`Shrink ${pfx} ${shrink.sfx}`,
-            img:existing?existing.img:'',
-            type:'ACC',
-            resolved:true,
-            resolvedFrom:wireLabel,
-            note
-          });
-        });
-        // Also evaluate explicit rules
-        if(hasRules&&wire_api){
-          const params={awg:wireData.awg,voltage:String(wireData.voltage||''),
-                        insulation:wireData.insulation||'',od_mm:String(wireData.od_mm)};
-          // Simple rule match
-          (item.rules||[]).forEach(rule=>{
-            const pval=params[rule.param];
-            if(!pval||String(pval).toLowerCase()!==String(rule.value).toLowerCase())return;
-            if(resolvedChildren.some(c=>c.k===rule.then))return;
-            const existing=db.find(x=>x.k.toLowerCase()===rule.then.toLowerCase());
-            resolvedChildren.push({
-              k:rule.then,v:existing?existing.v:(rule.note||'מחושב'),
-              img:existing?existing.img:'',type:'ACC',resolved:true,
-              resolvedFrom:wireItem.k,note:rule.note||''
-            });
-          });
-        }
-        return;
-      }
-    }
-
-    // Fallback: use old extractParams + rules
-    const params=_extractWireParams(wireDB);
-    if(!Object.keys(params).length)return;
-    if(params.awg&&!params.od_mm){params.od_mm=_getWireOD(params.awg,params.insulation||'pvc');}
-    if(!hasRules)return;
-    const re=window._dazuraRules;
-    if(!re)return;
-    const results=re.evaluateRules(item,params);
-    results.forEach(r=>{
-      if(resolvedChildren.some(c=>c.k===r.resolvedPN))return;
-      const existing=db.find(x=>x.k.toLowerCase()===r.resolvedPN.toLowerCase());
-      const wireLabel=`${wireItem.k}${params.awg?' ('+params.awg+'AWG)':''}`;
-      resolvedChildren.push({
-        k:r.resolvedPN,v:existing?existing.v:(r.note||'מחושב'),
-        img:existing?existing.img:'',type:'ACC',resolved:true,
-        resolvedFrom:wireLabel,note:r.note
-      });
+    const wd=api.dazuraSelectShrink(wireDB);
+    if(!wd||!wd.od_mm)return;
+    const wireLabel=`${wireItem.k} (${wd.awg}AWG${wd.specLabel?' '+wd.specLabel:''})`;
+    accPrefixes.forEach(prefix=>{
+      const pfx=prefix.toUpperCase();
+      if(!api.SHRINK_CATALOG[pfx])return;
+      const shrink=api.selectShrink(pfx,wd.od_mm);
+      if(!shrink||shrink.sfx==='?')return;
+      if(result.some(c=>c.k===shrink.fullPN))return;
+      const ex=db.find(x=>x.k.toLowerCase()===shrink.fullPN.toLowerCase());
+      result.push({k:shrink.fullPN,v:ex?ex.v:`Shrink ${pfx} ${shrink.sfx}`,
+        img:ex?ex.img:'',type:'ACC',resolved:true,resolvedFrom:wireLabel,
+        note:`${shrink.sfx} — OD=${wd.od_mm.toFixed(1)}mm`});
     });
   });
-
-  return resolvedChildren;
+  return result;
 }
 
-// Re-scan BOM when a WIRE is added — update existing items with rules
 function _rescanBOMAfterWireAdded(newWireKey){
   const wireItem=db.find(x=>x.k===newWireKey);
   if(!wireItem||!_isWireItem(wireItem))return;
 
-  // Use new wire API if available
-  const wire_api=window._dazuraWire;
-  let wireData=null;
-  if(wire_api){wireData=wire_api.dazuraSelectShrink(wireItem);}
-  const params=_extractWireParams(wireItem);
-  if(!wireData&&!Object.keys(params).length)return;
-  if(wireData){params.awg=wireData.awg;params.od_mm=wireData.od_mm;params.voltage=String(wireData.voltage||'');params.insulation=wireData.insulation||'';}
-  else if(params.awg)params.od_mm=_getWireOD(params.awg,params.insulation||'pvc');
-  const re=window._dazuraRules;
+  const api=window._dazuraWire;
+  if(!api){console.warn('[Dazura] _dazuraWire not ready');return;}
 
+  const wd=api.dazuraSelectShrink(wireItem);
+  if(!wd||!wd.od_mm)return;
+
+  const SHRINK_PFX=new Set(['rsfr','atum','rt','fp301','rsf']);
+  const wireLabel=`${newWireKey} (${wd.awg}AWG${wd.specLabel?' '+wd.specLabel:''})`;
   let updated=0;
-  const wireLabel=`${newWireKey}${wireData&&wireData.awg?' ('+wireData.awg+'AWG'+(wireData.specLabel?' '+wireData.specLabel:'')+')':(params.awg?' ('+params.awg+'AWG)':'')}`;
 
   bom.forEach(bomItem=>{
     const dbItem=db.find(x=>x.k===bomItem.k)||bomItem;
-    const hasAcc=(dbItem.acc||[]).length>0;
-    const hasRules=dbItem.rules&&dbItem.rules.length>0;
-    if(!hasAcc&&!hasRules)return;
+    const prefixes=(dbItem.acc||[]).filter(a=>SHRINK_PFX.has(a.toLowerCase().replace(/[-\s]/g,'')));
+    if(!prefixes.length)return;
 
-    // Handle acc prefixes (shrink catalog)
-    if(hasAcc&&wire_api&&wireData&&wireData.od_mm){
-      (dbItem.acc||[]).forEach(prefix=>{
-        const pfx=prefix.toUpperCase();
-        if(!wire_api.SHRINK_CATALOG[pfx])return;
-        const shrink=wire_api.selectShrink(pfx,wireData.od_mm);
-        if(!shrink||shrink.sfx==='?')return;
-        const resolvedPN=shrink.fullPN;
-        if(bomItem.children.some(c=>c.k===resolvedPN))return;
-        const existing=db.find(x=>x.k.toLowerCase()===resolvedPN.toLowerCase());
-        // Remove placeholder if exists
-        const plIdx=bomItem.children.findIndex(c=>c.k===pfx+'-(לחישוב)'||c.k===pfx.toLowerCase()+'-(לחישוב)');
-        if(plIdx>=0)bomItem.children.splice(plIdx,1);
-        if(bomItem.children.some(c=>c.k===resolvedPN))return;
-        bomItem.children.push({
-          k:resolvedPN,
-          v:existing?existing.v:`Shrink ${pfx} ${shrink.sfx}`,
-          img:existing?existing.img:'',
-          type:'ACC',resolved:true,resolvedFrom:wireLabel,
-          note:`${shrink.sfx} OD=${wireData.od_mm.toFixed(1)}mm`
-        });
-        updated++;
-      });
-    }
+    prefixes.forEach(prefix=>{
+      const pfx=prefix.toUpperCase();
+      if(!api.SHRINK_CATALOG[pfx])return;
+      const shrink=api.selectShrink(pfx,wd.od_mm);
+      if(!shrink||shrink.sfx==='?')return;
 
-    // Handle explicit rules
-    if(hasRules&&re){
-      const results=re.evaluateRules(dbItem,params);
-      results.forEach(r=>{
-        if(bomItem.children.some(c=>c.k===r.resolvedPN))return;
-        const existing=db.find(x=>x.k.toLowerCase()===r.resolvedPN.toLowerCase());
-        bomItem.children.push({
-          k:r.resolvedPN,v:existing?existing.v:(r.note||'מחושב'),
-          img:existing?existing.img:'',type:'ACC',
-          resolved:true,resolvedFrom:wireLabel,note:r.note||''
-        });
-        updated++;
-      });
-    }
+      // Remove placeholder
+      const plIdx=bomItem.children.findIndex(c=>c.k.startsWith(pfx+'-('));
+      if(plIdx>=0)bomItem.children.splice(plIdx,1);
+
+      if(bomItem.children.some(c=>c.k===shrink.fullPN))return;
+      const ex=db.find(x=>x.k.toLowerCase()===shrink.fullPN.toLowerCase());
+      bomItem.children.push({k:shrink.fullPN,
+        v:ex?ex.v:`Shrink ${pfx} ${shrink.sfx}`,img:ex?ex.img:'',
+        type:'ACC',resolved:true,resolvedFrom:wireLabel,
+        note:`${shrink.sfx} — OD=${wd.od_mm.toFixed(1)}mm`});
+      updated++;
+    });
   });
 
-  if(updated){
-    save(LS.BOM,bom);
-    renderBOM();
-    toast(`🔗 עודכנו ${updated} אביזרים בהתאם לחוט ${newWireKey}`,'');
-  }
+  if(updated){save(LS.BOM,bom);renderBOM();toast(`🔗 ${updated} שרוולים עודכנו — ${newWireKey}`,'');}
 }
-
 
 })();
