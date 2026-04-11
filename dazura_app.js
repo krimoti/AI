@@ -603,21 +603,18 @@ function addToBOM(k){
   const hasAccPrefixes=(item.acc||[]).some(ak=>SHRINK_PFX.has(ak.toLowerCase().replace(/[-\s]/g,'')));
   const hasRules=item.rules&&item.rules.length>0;
 
+  // Try auto-resolve, always push to BOM regardless
   if(hasAccPrefixes||hasRules){
-    const wireCount=bom.filter(b=>_isWireItem(db.find(x=>x.k===b.k)||b)).length;
-    // Always call autoResolve — it handles both "wires exist" and "no wires" cases
-    finalChildren=_autoResolveFromBOM(item,children);
-    const added=finalChildren.length-children.length;
-    bom.push({...item,children:finalChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
-    save(LS.BOM,bom);renderBOM();resetApproval();
-    toast('נוסף: '+k+(added?' + '+added+' אביזרים אוטומטיים 🔗':''),'');
-  } else {
-    bom.push({...item,children:finalChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
-    save(LS.BOM,bom);renderBOM();resetApproval();toast('נוסף: '+k,'');
+    try{finalChildren=_autoResolveFromBOM(item,children);}
+    catch(e){console.warn('[Dazura] autoResolve error:',e);finalChildren=children;}
   }
+  bom.push({...item,children:finalChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
+  save(LS.BOM,bom);renderBOM();resetApproval();
+  const added=finalChildren.length-children.length;
+  toast('נוסף: '+k+(added?' + '+added+' 🔗':''),'');
 
   // If this item IS a wire → re-scan existing BOM items for rules
-  setTimeout(()=>_rescanBOMAfterWireAdded(k),100);
+  setTimeout(()=>{try{_rescanBOMAfterWireAdded(k);}catch(e){console.warn('[Dazura] rescan error:',e);}},300);
 }
 
 
