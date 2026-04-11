@@ -574,15 +574,11 @@ function addToBOM(k){
   if(!item){toast('פריט לא נמצא ב-DB','');return;}
   if(bom.some(x=>x.k.toLowerCase()===k.toLowerCase())){toast('כבר ב-BOM','');return;}
 
-  // Build children
+  // Auto-add: Requires + Tool only
   const children=[];
   (item.req||[]).forEach(rk=>{
     const c=db.find(x=>x.k.toLowerCase()===rk.toLowerCase());
     children.push({k:rk,v:c?c.v:'חסר',img:c?c.img:'',type:'REQ'});
-  });
-  (item.acc||[]).forEach(ak=>{
-    const c=db.find(x=>x.k.toLowerCase()===ak.toLowerCase());
-    children.push({k:ak,v:c?c.v:'נלווה',img:c?c.img:'',type:'ACC'});
   });
   if(item.tool){
     const tc=db.find(x=>x.k.toLowerCase()===item.tool.toLowerCase());
@@ -590,12 +586,23 @@ function addToBOM(k){
     const tNote=(tQty===undefined||tQty===0)?'⚠️ חסר — להזמין 1 יח\'':'';
     children.push({k:item.tool,v:tc?tc.v:'כלי',img:tc?tc.img:'',type:'TOOL',note:tNote});
   }
+  // Accessories: stored separately — user adds manually via + button
 
   bom.push({...item,children,note:'',qty:1,itemType:'REQ',approvedAlt:null});
   save(LS.BOM,bom);
   renderBOM();
   resetApproval();
   toast('נוסף: '+k,'');
+}
+
+function addAccToBOM(bomIdx, ak){
+  const c=db.find(x=>x.k.toLowerCase()===ak.toLowerCase());
+  const child={k:ak,v:c?c.v:'נלווה',img:c?c.img:'',type:'ACC'};
+  if(bom[bomIdx].children.some(x=>x.k.toLowerCase()===ak.toLowerCase()))return;
+  bom[bomIdx].children.push(child);
+  save(LS.BOM,bom);
+  renderBOM();
+  toast('נוסף: '+ak,'');
 }
 
 
@@ -702,6 +709,22 @@ function renderBOM(){
       tr.querySelector('[data-rmalt]').addEventListener('click',e=>{
         bom[+e.currentTarget.dataset.rmalt].approvedAlt=null;
         save(LS.BOM,bom);renderBOM();
+      });
+    }
+
+    // ── Accessories suggestion row ──
+    if((item.acc||[]).length>0){
+      const accRow=document.createElement('tr');
+      accRow.style.cssText='background:var(--tag-acc-bg);border-right:3px solid var(--tag-acc-c);';
+      const accBtns=(item.acc||[]).map(ak=>{
+        const alreadyAdded=item.children.some(c=>c.k.toLowerCase()===ak.toLowerCase());
+        if(alreadyAdded)return `<span style="font-size:.78em;padding:3px 8px;border-radius:4px;background:var(--success);color:#fff;margin-left:4px;">✅ ${esc(ak)}</span>`;
+        return `<button class="btn-acc-add" data-bomidx="${idx}" data-ak="${esc(ak)}" style="font-size:.78em;padding:3px 10px;border-radius:4px;background:var(--primary);color:#fff;border:none;cursor:pointer;margin-left:4px;">+ ${esc(ak)}</button>`;
+      }).join('');
+      accRow.innerHTML=`<td></td><td colspan="9" style="padding:5px 10px;"><span style="font-size:.78em;color:var(--tag-acc-c);font-weight:bold;margin-left:8px;">נלווים:</span>${accBtns}</td>`;
+      body.appendChild(accRow);
+      accRow.querySelectorAll('.btn-acc-add').forEach(btn=>{
+        btn.addEventListener('click',()=>addAccToBOM(+btn.dataset.bomidx, btn.dataset.ak));
       });
     }
 
