@@ -653,6 +653,7 @@ function renderBOM(){
         <div style="font-size:.78em;color:var(--alt);font-weight:bold;">💡 ${esc(alt.item.k)} ${ab} <span style="opacity:.7;">(${alt.score}%)</span></div>
         <div class="alt-row" style="margin:2px 0;"><div class="alt-bar"><div class="alt-fill" style="width:${alt.score}%"></div></div><span class="alt-pct">${alt.score}%</span></div>
         <button class="btn btn-ghost" data-approve="${idx}" data-altk="${esc(alt.item.k)}" style="margin-top:2px;padding:2px 7px;font-size:.75em;color:var(--success);border-color:var(--success);">✅ אשר</button>
+        <button class="btn btn-ghost" data-dismiss="${idx}" data-altk="${esc(alt.item.k)}" style="margin-top:2px;padding:2px 7px;font-size:.75em;color:var(--danger);border-color:var(--danger);">✖ הסר</button>
       </div>`;
     }
 
@@ -709,6 +710,15 @@ function renderBOM(){
       tr.querySelector('[data-approve]').addEventListener('click',e=>{
         bom[+e.currentTarget.dataset.approve].approvedAlt=e.currentTarget.dataset.altk;
         save(LS.BOM,bom);renderBOM();toast('חלופה אושרה ✅','');
+      });
+    }
+    if(tr.querySelector('[data-dismiss]')){
+      tr.querySelector('[data-dismiss]').addEventListener('click',e=>{
+        const i=+e.currentTarget.dataset.dismiss;
+        const altK=e.currentTarget.dataset.altk;
+        if(!bom[i].dismissedAlts)bom[i].dismissedAlts=[];
+        if(!bom[i].dismissedAlts.includes(altK))bom[i].dismissedAlts.push(altK);
+        save(LS.BOM,bom);renderBOM();toast('חלופה הוסרה','');
       });
     }
     if(tr.querySelector('[data-rmalt]')){
