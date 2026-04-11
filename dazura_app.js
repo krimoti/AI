@@ -2722,41 +2722,70 @@ function _getWireOD(awg, insulation){
 
 // Main function: when item with rules is added, auto-resolve from BOM wires
 function _autoResolveFromBOM(item, children){
-  const api=window._dazuraWire;
   const SHRINK_PFX=new Set(['rsfr','atum','rt','fp301','rsf']);
   const accPrefixes=(item.acc||[]).filter(a=>SHRINK_PFX.has(a.toLowerCase().replace(/[-\s]/g,'')));
   if(!accPrefixes.length)return children;
 
   const wires=bom.filter(b=>{const d=db.find(x=>x.k===b.k)||b;return _isWireItem(d);});
   if(!wires.length){
-    // No wires yet — placeholder per prefix
+    // No wires yet — add placeholder per prefix
     const ph=[...children];
-    accPrefixes.forEach(pfx=>{
-      if(!ph.some(c=>c.k.toUpperCase().startsWith(pfx.toUpperCase())))
-        ph.push({k:pfx.toUpperCase()+'-(לחישוב)',v:'שרוול — יחושב עם הוספת חוט',
+    accPrefixes.forEach(prefix=>{
+      const pfx=prefix.toUpperCase();
+      if(!ph.some(c=>c.k.toUpperCase().startsWith(pfx)))
+        ph.push({k:pfx+'-(לחישוב)',v:'שרוול — יחושב עם הוספת חוט',
                  img:'',type:'ACC',resolved:true,resolvedFrom:'ממתין לחוט'});
     });
     return ph;
   }
 
-  if(!api){console.warn('[Dazura] _dazuraWire not ready');return children;}
+  // Check if global functions from semantics are available
+  const canResolve=typeof dazuraSelectShrink==='function'&&
+                   typeof selectShrink==='function'&&
+                   typeof SHRINK_CATALOG!=='undefined';
 
   const result=[...children];
   wires.forEach(wireItem=>{
     const wireDB=db.find(x=>x.k===wireItem.k)||wireItem;
-    const wd=api.dazuraSelectShrink(wireDB);
-    if(!wd||!wd.od_mm)return;
-    const wireLabel=`${wireItem.k} (${wd.awg}AWG${wd.specLabel?' '+wd.specLabel:''})`;
+    let od_mm=null, wireLabel=wireItem.k;
+
+    if(canResolve){
+      const wd=dazuraSelectShrink(wireDB);
+      if(wd&&wd.od_mm){
+        od_mm=wd.od_mm;
+        wireLabel=`${wireItem.k} (${wd.awg}AWG${wd.specLabel?' '+wd.specLabel:''})`;
+      }
+    }
+    // Fallback: extract AWG from description
+    if(!od_mm){
+      const p=_extractWireParams(wireDB);
+      if(p.awg){
+        const OD={'10':5.00,'12':4.19,'14':3.51,'16':3.23,'18':2.77,
+                  '20':2.34,'22':2.06,'24':1.83,'26':1.65,'28':1.47,'30':1.35};
+        od_mm=OD[String(p.awg)]||null;
+        wireLabel=`${wireItem.k} (${p.awg}AWG)`;
+      }
+    }
+    if(!od_mm)return;
+
     accPrefixes.forEach(prefix=>{
       const pfx=prefix.toUpperCase();
-      if(!api.SHRINK_CATALOG[pfx])return;
-      const shrink=api.selectShrink(pfx,wd.od_mm);
-      if(!shrink||shrink.sfx==='?')return;
+      let shrink=null;
+      if(canResolve&&SHRINK_CATALOG[pfx]){
+        shrink=selectShrink(pfx,od_mm);
+      } else {
+        // Built-in minimal selector
+        const SIZES=[{sfx:'3/32',id:2.40},{sfx:'3/16',id:4.80},{sfx:'H1',id:6.40},{sfx:'3/8',id:9.50}];
+        const sz=SIZES.find(s=>s.id>=od_mm*1.10)||SIZES[SIZES.length-1];
+        shrink={sfx:sz.sfx,fullPN:`${pfx}-${sz.sfx}`};
+      }
+      if(!shrink||!shrink.sfx)return;
       if(result.some(c=>c.k===shrink.fullPN))return;
       const ex=db.find(x=>x.k.toLowerCase()===shrink.fullPN.toLowerCase());
-      result.push({k:shrink.fullPN,v:ex?ex.v:`Shrink ${pfx} ${shrink.sfx}`,
-        img:ex?ex.img:'',type:'ACC',resolved:true,resolvedFrom:wireLabel,
-        note:`${shrink.sfx} — OD=${wd.od_mm.toFixed(1)}mm`});
+      result.push({k:shrink.fullPN,
+        v:ex?ex.v:`Shrink ${pfx} ${shrink.sfx}`,img:ex?ex.img:'',
+        type:'ACC',resolved:true,resolvedFrom:wireLabel,
+        note:`${shrink.sfx} — OD=${od_mm.toFixed(1)}mm`});
     });
   });
   return result;
@@ -2766,14 +2795,30 @@ function _rescanBOMAfterWireAdded(newWireKey){
   const wireItem=db.find(x=>x.k===newWireKey);
   if(!wireItem||!_isWireItem(wireItem))return;
 
-  const api=window._dazuraWire;
-  if(!api){console.warn('[Dazura] _dazuraWire not ready');return;}
+  const canResolve=typeof dazuraSelectShrink==='function'&&
+                   typeof selectShrink==='function'&&
+                   typeof SHRINK_CATALOG!=='undefined';
 
-  const wd=api.dazuraSelectShrink(wireItem);
-  if(!wd||!wd.od_mm)return;
+  let od_mm=null, wireLabel=newWireKey;
+  if(canResolve){
+    const wd=dazuraSelectShrink(wireItem);
+    if(wd&&wd.od_mm){
+      od_mm=wd.od_mm;
+      wireLabel=`${newWireKey} (${wd.awg}AWG${wd.specLabel?' '+wd.specLabel:''})`;
+    }
+  }
+  if(!od_mm){
+    const p=_extractWireParams(wireItem);
+    if(p.awg){
+      const OD={'10':5.00,'12':4.19,'14':3.51,'16':3.23,'18':2.77,
+                '20':2.34,'22':2.06,'24':1.83,'26':1.65,'28':1.47,'30':1.35};
+      od_mm=OD[String(p.awg)]||null;
+      wireLabel=`${newWireKey} (${p.awg}AWG)`;
+    }
+  }
+  if(!od_mm)return;
 
   const SHRINK_PFX=new Set(['rsfr','atum','rt','fp301','rsf']);
-  const wireLabel=`${newWireKey} (${wd.awg}AWG${wd.specLabel?' '+wd.specLabel:''})`;
   let updated=0;
 
   bom.forEach(bomItem=>{
@@ -2783,11 +2828,17 @@ function _rescanBOMAfterWireAdded(newWireKey){
 
     prefixes.forEach(prefix=>{
       const pfx=prefix.toUpperCase();
-      if(!api.SHRINK_CATALOG[pfx])return;
-      const shrink=api.selectShrink(pfx,wd.od_mm);
-      if(!shrink||shrink.sfx==='?')return;
+      let shrink=null;
+      if(canResolve&&SHRINK_CATALOG[pfx]){
+        shrink=selectShrink(pfx,od_mm);
+      } else {
+        const SIZES=[{sfx:'3/32',id:2.40},{sfx:'3/16',id:4.80},{sfx:'H1',id:6.40},{sfx:'3/8',id:9.50}];
+        const sz=SIZES.find(s=>s.id>=od_mm*1.10)||SIZES[SIZES.length-1];
+        shrink={sfx:sz.sfx,fullPN:`${pfx}-${sz.sfx}`};
+      }
+      if(!shrink||!shrink.sfx)return;
 
-      // Remove placeholder
+      // Remove any placeholder
       const plIdx=bomItem.children.findIndex(c=>c.k.startsWith(pfx+'-('));
       if(plIdx>=0)bomItem.children.splice(plIdx,1);
 
@@ -2796,12 +2847,116 @@ function _rescanBOMAfterWireAdded(newWireKey){
       bomItem.children.push({k:shrink.fullPN,
         v:ex?ex.v:`Shrink ${pfx} ${shrink.sfx}`,img:ex?ex.img:'',
         type:'ACC',resolved:true,resolvedFrom:wireLabel,
-        note:`${shrink.sfx} — OD=${wd.od_mm.toFixed(1)}mm`});
+        note:`${shrink.sfx} — OD=${od_mm.toFixed(1)}mm`});
       updated++;
     });
   });
 
   if(updated){save(LS.BOM,bom);renderBOM();toast(`🔗 ${updated} שרוולים עודכנו — ${newWireKey}`,'');}
 }
+
+
+function _showRulesDialog(item, children, k){
+  // Collect unique params needed
+  const neededParams=[...new Set((item.rules||[]).map(r=>r.param))];
+
+  // Build a simple dialog
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9800;display:flex;align-items:center;justify-content:center;';
+
+  const paramFields=neededParams.map(p=>{
+    const labels={awg:'AWG (עובי חוט)',voltage:'מתח (V)',mm2:'חתך (mm²)',temp:'טמפ׳ (°C)',shrink_ratio:'יחס כיווץ'};
+    const hints={awg:'14, 16, 18, 20, 22...', voltage:'300, 600, 1000', mm2:'0.5, 0.75, 1, 1.5, 2.5', temp:'85, 105, 125'};
+    return `<div style="margin-bottom:10px;">
+      <label style="font-size:.85em;font-weight:bold;color:var(--text);">${labels[p]||p}</label>
+      <input type="text" id="rp_${p}" placeholder="${hints[p]||p}" 
+        style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--hover);color:var(--text);font-size:1em;direction:ltr;text-align:left;">
+    </div>`;
+  }).join('');
+
+  overlay.innerHTML=`
+    <div style="background:var(--card);border-radius:14px;padding:22px;width:360px;max-width:92vw;border:2px solid var(--primary);box-shadow:0 8px 40px rgba(0,0,0,.3);">
+      <h3 style="margin:0 0 5px;color:var(--text);">🔗 תלויות דינמיות</h3>
+      <p style="font-size:.82em;color:var(--text2);margin:0 0 14px;">
+        הנירון <b>${esc(k)}</b> דורש פרמטרים לבחירת אביזרים מתאימים:
+      </p>
+      ${paramFields}
+      <div id="rulesPreview" style="margin:10px 0;padding:8px;background:var(--hover);border-radius:7px;min-height:30px;font-size:.82em;"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button id="rulesConfirmBtn" class="btn btn-primary" style="flex:1;">✅ הוסף ל-BOM</button>
+        <button id="rulesSkipBtn" class="btn btn-ghost" style="flex:1;">דלג על פרמטרים</button>
+        <button id="rulesCancelBtn" class="btn btn-ghost" style="padding:8px 12px;">ביטול</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  // Live preview as user types
+  function updatePreview(){
+    const params={};
+    neededParams.forEach(p=>{const v=document.getElementById('rp_'+p)?.value.trim();if(v)params[p]=v;});
+    if(!Object.keys(params).length){document.getElementById('rulesPreview').innerHTML='';return;}
+
+    const re=window._dazuraRules;
+    if(!re){document.getElementById('rulesPreview').innerHTML='<span style="color:var(--text2)">טוען...</span>';return;}
+
+    const results=re.evaluateRules(item,params);
+    if(!results.length){
+      document.getElementById('rulesPreview').innerHTML='<span style="color:var(--text2)">אין התאמה לפרמטרים שהוזנו</span>';
+      return;
+    }
+    document.getElementById('rulesPreview').innerHTML=
+      '<b style="color:var(--primary)">💡 מומלץ להוסיף:</b><br>'+
+      results.map(r=>`
+        <div style="display:flex;align-items:center;gap:6px;margin-top:5px;">
+          <span style="background:var(--tag-acc-bg);color:var(--tag-acc-c);padding:2px 8px;border-radius:4px;font-weight:bold;">${esc(r.resolvedPN)}</span>
+          <span style="color:var(--text2);font-size:.9em;">${esc(r.note)}</span>
+        </div>`).join('');
+  }
+
+  neededParams.forEach(p=>document.getElementById('rp_'+p)?.addEventListener('input',updatePreview));
+
+  // Confirm — add item + resolved children
+  document.getElementById('rulesConfirmBtn').addEventListener('click',()=>{
+    const params={};
+    neededParams.forEach(p=>{const v=document.getElementById('rp_'+p)?.value.trim();if(v)params[p]=v;});
+
+    // Evaluate rules and inject resolved items as children
+    const re=window._dazuraRules;
+    const resolvedChildren=[...children];
+    if(re&&Object.keys(params).length){
+      const results=re.evaluateRules(item,params);
+      results.forEach(r=>{
+        const existing=db.find(x=>x.k.toLowerCase()===r.resolvedPN.toLowerCase());
+        resolvedChildren.push({
+          k:r.resolvedPN,
+          v:existing?existing.v:(r.note||'נלווה מחושב'),
+          img:existing?existing.img:'',
+          type:'ACC',
+          resolved:true,
+          resolvedFrom:r.rule.param+'='+r.rule.value
+        });
+      });
+    }
+
+    bom.push({...item,children:resolvedChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params});
+    save(LS.BOM,bom);renderBOM();resetApproval();
+    document.body.removeChild(overlay);
+    toast('נוסף: '+k+(resolvedChildren.length>children.length?' + '+( resolvedChildren.length-children.length)+' אביזרים מחושבים':''),'');
+  });
+
+  document.getElementById('rulesSkipBtn').addEventListener('click',()=>{
+    bom.push({...item,children,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
+    save(LS.BOM,bom);renderBOM();resetApproval();
+    document.body.removeChild(overlay);
+    toast('נוסף: '+k,'');
+  });
+  document.getElementById('rulesCancelBtn').addEventListener('click',()=>document.body.removeChild(overlay));
+
+  // Focus first field
+  setTimeout(()=>document.getElementById('rp_'+neededParams[0])?.focus(),100);
+}
+
+
+
 
 })();
