@@ -570,8 +570,10 @@ document.getElementById('precisionRange').addEventListener('input',()=>{clearTim
 
 /* ══ BOM ══ */
 function addToBOM(k){
+  console.log('[BOM+] adding:',k);
   const item=db.find(x=>x.k.toLowerCase()===k.toLowerCase())||{k,v:'חסר',img:'',req:[],tool:'',acc:[],custom:[],rules:[]};
-  if(bom.some(x=>x.k===item.k)){toast('כבר ב-BOM','');return;}
+  console.log('[BOM+] item found:',!!item,'acc:',item.acc,'rules:',item.rules?.length);
+  if(bom.some(x=>x.k===item.k)){toast('כבר ב-BOM','');console.log('[BOM+] BLOCKED: already in BOM');return;}
   if(bom.some(x=>x.approvedAlt&&x.approvedAlt.toLowerCase()===k.toLowerCase())){toast('פריט זה הוגדר כחלופה מאושרת','');return;}
 
   // Build base children
@@ -605,13 +607,21 @@ function addToBOM(k){
 
   // Try auto-resolve, always push to BOM regardless
   if(hasAccPrefixes||hasRules){
-    try{finalChildren=_autoResolveFromBOM(item,children);}
-    catch(e){console.warn('[Dazura] autoResolve error:',e);finalChildren=children;}
+    console.log('[BOM+] calling _autoResolveFromBOM, wires in BOM:',bom.filter(b=>_isWireItem(db.find(x=>x.k===b.k)||b)).length);
+  try{
+    finalChildren=_autoResolveFromBOM(item,children);
+    console.log('[BOM+] autoResolve OK, children:',finalChildren.map(c=>c.k));
+  }catch(e){
+    console.warn('[BOM+] autoResolve FAILED:',e.message,e.stack);
+    finalChildren=children;
   }
+  }
+  console.log('[BOM+] pushing to BOM, finalChildren:',finalChildren.length);
   bom.push({...item,children:finalChildren,note:'',qty:1,itemType:'REQ',approvedAlt:null,params:{}});
   save(LS.BOM,bom);renderBOM();resetApproval();
   const added=finalChildren.length-children.length;
   toast('נוסף: '+k+(added?' + '+added+' 🔗':''),'');
+  console.log('[BOM+] done. BOM size:',bom.length);
 
   // If this item IS a wire → re-scan existing BOM items for rules
   setTimeout(()=>{try{_rescanBOMAfterWireAdded(k);}catch(e){console.warn('[Dazura] rescan error:',e);}},300);
@@ -2724,6 +2734,7 @@ function _autoResolveFromBOM(item, children){
   if(!accPrefixes.length)return children;
 
   const wires=bom.filter(b=>{const d=db.find(x=>x.k===b.k)||b;return _isWireItem(d);});
+  console.log('[autoResolve] accPrefixes:',accPrefixes,'wires found:',wires.map(w=>w.k));
   if(!wires.length){
     // No wires yet — add placeholder per prefix
     const ph=[...children];
